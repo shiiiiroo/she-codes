@@ -6,6 +6,7 @@ const api = axios.create({ baseURL: '/api' })
 export const getTasks = (view, date, category, status) =>
   api.get('/tasks/', { params: { view, date_str: date, category, status } })
 
+export const getUndated = () => api.get('/tasks/undated')
 export const getUnsorted = () => api.get('/tasks/unsorted')
 export const getOverdue = () => api.get('/tasks/overdue')
 export const getTips = () => api.get('/tasks/tips')
@@ -14,7 +15,8 @@ export const getLoad = (date) => api.get(`/tasks/load/${date}`)
 export const createTask = (data) => api.post('/tasks/', data)
 export const updateTask = (id, data) => api.patch(`/tasks/${id}`, data)
 export const completeTask = (id) => api.post(`/tasks/${id}/complete`)
-export const postponeTask = (id, newDate) => api.post(`/tasks/${id}/postpone`, null, { params: { new_date: newDate } })
+export const postponeTask = (id, newDate) =>
+  api.post(`/tasks/${id}/postpone`, null, { params: { new_date: newDate } })
 export const toggleSubtask = (id, idx) => api.patch(`/tasks/${id}/subtasks/${idx}`)
 export const deleteTask = (id) => api.delete(`/tasks/${id}`)
 

@@ -12,11 +12,6 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 # ─── SCHEMAS ──────────────────────────────────────────────────────────────────
 
-class SubtaskSchema(BaseModel):
-    title: str
-    done: bool = False
-
-
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
@@ -71,23 +66,26 @@ def task_to_dict(t: Task) -> dict:
 
 @router.get("/")
 def get_tasks(
-    view: str = Query("day", description="day|week|month|year"),
-    date_str: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    view: str = Query("day"),
+    date_str: Optional[str] = Query(None),
     category: Optional[str] = None,
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Get tasks for calendar view (day/week/month/year)."""
+    """
+    Returns tasks for calendar view.
+    Includes:
+    - Tasks whose start_datetime falls in the period
+    - Tasks whose deadline falls in the period (overdue shown on deadline day)
+    - Tasks with NO date at all (undated) — separately in 'undated' key
+    - Overdue tasks (deadline < today, not completed) — included in current period
+    """
     user_id = 1
     target_date = date.fromisoformat(date_str) if date_str else date.today()
-    query = db.query(Task).filter(Task.user_id == user_id)
+    now = datetime.now()
+    today_start = datetime.combine(date.today(), datetime.min.time())
 
-    if category:
-        query = query.filter(Task.category == category)
-    if status:
-        query = query.filter(Task.status == status)
-
-    # Date range filtering
+    # Build date range for the view
     if view == "day":
         start = datetime.combine(target_date, datetime.min.time())
         end = start + timedelta(days=1)
@@ -108,19 +106,81 @@ def get_tasks(
         start = datetime.combine(target_date, datetime.min.time())
         end = start + timedelta(days=1)
 
-    tasks = query.filter(
-        or_(
-            and_(Task.start_datetime >= start, Task.start_datetime < end),
-            and_(Task.deadline >= start, Task.deadline < end),
-            Task.start_datetime.is_(None),  # unsorted tasks
-        )
-    ).order_by(Task.start_datetime.asc()).all()
+    base_query = db.query(Task).filter(Task.user_id == user_id)
+    if category:
+        base_query = base_query.filter(Task.category == category)
+    if status:
+        base_query = base_query.filter(Task.status == status)
+
+    all_tasks = base_query.all()
+
+    # 1. Tasks that START within the period
+    in_period = [
+        t for t in all_tasks
+        if t.start_datetime and start <= t.start_datetime < end
+    ]
+
+    # 2. Tasks with deadline in period but no start_datetime
+    deadline_only = [
+        t for t in all_tasks
+        if t.deadline
+        and not t.start_datetime
+        and start <= t.deadline < end
+    ]
+
+    # 3. Overdue: deadline < today, not completed, not already in period
+    # These are shown in current view so user sees them
+    in_period_ids = {t.id for t in in_period} | {t.id for t in deadline_only}
+    overdue_floating = [
+        t for t in all_tasks
+        if t.deadline
+        and t.deadline < today_start
+        and t.status not in ("completed", "postponed")
+        and t.id not in in_period_ids
+    ]
+
+    # Auto-mark overdue status in DB
+    for t in overdue_floating:
+        if t.status == "pending":
+            t.status = "overdue"
+    if overdue_floating:
+        db.commit()
+
+    # Combine scheduled tasks
+    scheduled_ids = in_period_ids | {t.id for t in overdue_floating}
+    scheduled = in_period + deadline_only + overdue_floating
+
+    # 4. Undated tasks: no start_datetime, no deadline, not completed
+    undated = [
+        t for t in all_tasks
+        if not t.start_datetime
+        and not t.deadline
+        and t.status not in ("completed",)
+        and t.id not in scheduled_ids
+    ]
+
+    scheduled.sort(key=lambda t: (
+        t.start_datetime or t.deadline or datetime.max
+    ))
 
     return {
-        "tasks": [task_to_dict(t) for t in tasks],
+        "tasks": [task_to_dict(t) for t in scheduled],
+        "undated": [task_to_dict(t) for t in undated],
         "view": view,
         "date": str(target_date),
     }
+
+
+@router.get("/undated")
+def get_undated(db: Session = Depends(get_db)):
+    """Tasks with no date and no deadline."""
+    tasks = db.query(Task).filter(
+        Task.user_id == 1,
+        Task.start_datetime.is_(None),
+        Task.deadline.is_(None),
+        Task.status != "completed",
+    ).order_by(Task.created_at.desc()).all()
+    return [task_to_dict(t) for t in tasks]
 
 
 @router.get("/unsorted")
@@ -165,13 +225,16 @@ def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
         start_datetime=task_in.start_datetime,
         end_datetime=task_in.end_datetime,
         deadline=task_in.deadline,
-        subtasks=[{"title": s["title"] if isinstance(s, dict) else s, "done": False} for s in (task_in.subtasks or [])],
+        subtasks=[
+            {"title": s["title"] if isinstance(s, dict) else s, "done": False}
+            for s in (task_in.subtasks or [])
+        ],
         is_recurring=task_in.is_recurring,
         recurrence_rule=task_in.recurrence_rule,
         ai_generated=False,
     )
-    if task.start_datetime and task.duration_minutes and not task.end_datetime:
-        task.end_datetime = task.start_datetime + timedelta(minutes=task.duration_minutes)
+    if task.start_datetime and task_in.duration_minutes and not task.end_datetime:
+        task.end_datetime = task.start_datetime + timedelta(minutes=task_in.duration_minutes)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -194,7 +257,10 @@ def update_task(task_id: int, updates: TaskUpdate, db: Session = Depends(get_db)
         raise HTTPException(404, "Task not found")
     for field, value in updates.dict(exclude_none=True).items():
         setattr(task, field, value)
-    task.updated_at = datetime.utcnow()
+    # If status set to pending/active, clear completed_at
+    if updates.status and updates.status in ("pending", "in_progress"):
+        task.completed_at = None
+    task.updated_at = datetime.now()
     db.commit()
     db.refresh(task)
     update_daily_stats(db, user_id=1)
@@ -207,8 +273,8 @@ def complete_task(task_id: int, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(404, "Task not found")
     task.status = "completed"
-    task.completed_at = datetime.utcnow()
-    task.updated_at = datetime.utcnow()
+    task.completed_at = datetime.now()
+    task.updated_at = datetime.now()
     db.commit()
     update_daily_stats(db, user_id=1)
     return {"ok": True, "task_id": task_id}
@@ -227,7 +293,7 @@ def postpone_task(task_id: int, new_date: str, db: Session = Depends(get_db)):
     if task.deadline:
         task.deadline = new_dt
     task.status = "postponed"
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now()
     db.commit()
     update_daily_stats(db, user_id=1)
     return task_to_dict(task)
@@ -243,7 +309,7 @@ def toggle_subtask(task_id: int, sub_idx: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "Subtask index out of range")
     subs[sub_idx]["done"] = not subs[sub_idx]["done"]
     task.subtasks = subs
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now()
     db.commit()
     return task_to_dict(task)
 

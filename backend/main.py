@@ -1,6 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+import os
+
+# Загружаем .env ДО импорта всего остального
+load_dotenv()
+
 from database import create_tables
 from routers.tasks import router as tasks_router
 from routers.ai_agent import router as ai_router
@@ -41,3 +47,13 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+@app.get("/debug/env")
+def debug_env():
+    """Проверка что ключи загружены"""
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    return {
+        "anthropic_key_set": bool(key),
+        "anthropic_key_prefix": key[:12] + "..." if key else "NOT SET",
+        "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
+    }
