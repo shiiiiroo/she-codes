@@ -59,6 +59,7 @@ Rules:
 - ALWAYS respond in the same language as the user (Russian/English).
 - Return ONLY JSON.
 - To edit a task, identify its ID from CURRENT TASKS.
+- If the user wants to change a task but doesn't specify WHAT to change, ask a clarifying question instead of sending an empty tasks_to_update
 - If the user doesn't specify a time, set start_datetime to null or ask a clarifying question.
 """
 def get_user_context(db: Session, user_id: int = 1) -> dict:
@@ -115,10 +116,22 @@ def get_chat_history(db: Session, user_id: int = 1, limit: int = 10) -> list:
     return [{"role": m.role, "content": m.content} for m in msgs]
 
 def save_message(db: Session, role: str, content: str, user_id: int = 1, msg_type: str = "text", metadata: dict = None):
-    msg = ChatMessage(user_id=user_id, role=role, content=content, message_type=msg_type, meta=metadata or {})
-    db.add(msg)
-    db.commit()
-
+    try:
+        new_msg = ChatMessage(
+            user_id=user_id,
+            role=role,
+            content=content,
+            message_type=msg_type,  # В модели это message_type
+            meta=metadata,          # В модели это meta
+            created_at=datetime.utcnow()
+        )
+        db.add(new_msg)
+        db.commit()
+        db.refresh(new_msg)
+    except Exception as e:
+        db.rollback()
+        print(f"Ошибка сохранения сообщения: {e}")
+        
 def create_tasks_from_ai(db: Session, tasks_data: list, user_id: int = 1) -> list:
     created = []
     for td in tasks_data:
@@ -156,7 +169,8 @@ def update_task_in_db(db: Session, task_id: int, updates: dict):
     if not task:
         print(f"DEBUG: Task {task_id} not found")
         return None
-    
+    if not updates: # Если пришел пустой словарь - ничего не делаем
+        return None
     for field, value in updates.items():
         if hasattr(task, field):
             if field in ["start_datetime", "deadline", "end_datetime"] and isinstance(value, str):

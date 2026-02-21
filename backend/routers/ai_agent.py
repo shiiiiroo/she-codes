@@ -36,9 +36,37 @@ async def chat(
     message: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    result = await process_message(message, db, user_id=1, msg_type="text")
-    return result
+    # 1. СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
+    user_msg = ChatMessage(
+        user_id=1,
+        role="user",
+        content=message,
+        message_type="text",
+        meta={}
+    )
+    print(f"DEBUG: Saving message from user: {message}")
+    db.add(user_msg)
+    db.commit()
+    print("DEBUG: Commit successful!") # Сохраняем, чтобы получить ID или просто зафиксировать
 
+    # 2. ПОЛУЧАЕМ ОТВЕТ ОТ АГЕНТА
+    result = await process_message(message, db, user_id=1, msg_type="text")
+    
+    # 3. СОХРАНЯЕМ ОТВЕТ АССИСТЕНТА
+    # Берем текст ответа из поля 'message' (которое возвращает ваш агент)
+    ai_content = result.get("message") or "Задача обновлена"
+    
+    ai_msg = ChatMessage(
+        user_id=1,
+        role="assistant",
+        content=ai_content,
+        message_type="text",
+        meta=result # Сохраняем весь результат (tasks_created и т.д.) в метаданные
+    )
+    db.add(ai_msg)
+    db.commit()
+
+    return result
 
 @router.post("/voice")
 async def voice_chat(

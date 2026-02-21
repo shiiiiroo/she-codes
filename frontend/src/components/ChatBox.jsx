@@ -103,59 +103,79 @@ export default function ChatBox({ onTasksUpdated }) {
   const recordTimerRef = useRef(null)
 
   // Load history on mount
-  useEffect(() => {
-    getChatHistory().then(res => {
-      setMessages(res.data)
-    }).catch(() => {})
-  }, [])
+  // ChatBox.jsx
 
-  // Auto scroll
-  useEffect(() => {
+useEffect(() => {
+  const initChat = async () => {
+    try {
+      // 1. Делаем запрос к API
+      const response = await getChatHistory();
+      
+      // 2. В axios данные приходят в поле .data
+      // На бэкенде в get_history ты возвращаешь список: return [msg_to_dict(m) for m in msgs]
+      const history = response.data;
+
+      if (Array.isArray(history)) {
+        console.log("История загружена:", history.length, "сообщений");
+        setMessages(history); // ЗАПИСЫВАЕМ В STORE
+      }
+    } catch (error) {
+      console.error("Ошибка загрузки истории чата:", error);
+    }
+  };
+
+  initChat();
+}, []); // Пустые скобки — сработает только 1 раз при обновлении страницы (F5)
+useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isAiTyping])
 
   const handleSend = async (text = input.trim()) => {
-    if (!text) return
-    setInput('')
-    const userMsg = {
-      id: Date.now(),
-      role: 'user',
-      content: text,
+  if (!text) return
+  const tempId = Date.now()
+  setInput('')
+  
+  const userMsg = {
+    id: tempId,
+    role: 'user',
+    content: text,
+    message_type: 'text',
+    metadata: {},
+    created_at: new Date().toISOString(),
+  }
+  addMessage(userMsg)
+  setAiTyping(true)
+
+  try {
+    const res = await sendChat(text)
+    const data = res.data || res 
+
+    const aiMsg = {
+      id: Date.now() + 1,
+      role: 'assistant',
+      // ИСПРАВЛЕНИЕ: если ИИ прислал пустое сообщение, пишем системную фразу
+      content: data.message || "Задачи обновлены 👍", 
       message_type: 'text',
-      metadata: {},
+      metadata: data,
       created_at: new Date().toISOString(),
     }
-    addMessage(userMsg)
-    setAiTyping(true)
+    
+    addMessage(aiMsg)
 
-    try {
-      const res = await sendChat(text)
-      const aiMsg = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: res.message,
-        message_type: 'text',
-        metadata: res,
-        created_at: new Date().toISOString(),
-      }
-      addMessage(aiMsg)
-      if (res.tasks_created?.length > 0) {
-        onTasksUpdated?.()
-        toast.success(`Создано задач: ${res.tasks_created.length}`)
-      }
-    } catch (e) {
-      addMessage({
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: 'Ошибка соединения. Попробуйте позже.',
-        message_type: 'text',
-        metadata: {},
-        created_at: new Date().toISOString(),
-      })
-    } finally {
-      setAiTyping(false)
+    if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+      // Вызываем обновление календаря
+      onTasksUpdated?.() 
+      
+      if (data.tasks_created?.length > 0) toast.success(`Создано: ${data.tasks_created.length}`)
+      if (data.tasks_updated?.length > 0) toast.success(`Обновлено: ${data.tasks_updated.length}`)
     }
+
+  } catch (e) {
+    toast.error("Ошибка связи с ИИ")
+  } finally {
+    setAiTyping(false)
   }
+}
 
   // Voice recording
   const startRecording = async () => {
@@ -199,6 +219,8 @@ export default function ChatBox({ onTasksUpdated }) {
 
     try {
       const res = await sendVoice(blob)
+      const data = res.data || res
+
       // Update user message with transcript
       userMsg.content = `🎤 ${res.transcript || 'Голосовое сообщение'}`
       const aiMsg = {
@@ -210,9 +232,10 @@ export default function ChatBox({ onTasksUpdated }) {
         created_at: new Date().toISOString(),
       }
       addMessage(aiMsg)
-      if (res.tasks_created?.length > 0) {
+
+      if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
         onTasksUpdated?.()
-        toast.success(`Создано задач: ${res.tasks_created.length}`)
+        toast.success(`Задачи обработаны (голос)`)
       }
     } catch {
       toast.error('Ошибка обработки голоса')
@@ -236,6 +259,8 @@ export default function ChatBox({ onTasksUpdated }) {
     setAiTyping(true)
     try {
       const res = await uploadFile(file)
+      const data = res.data || res
+
       addMessage({
         id: Date.now() + 1,
         role: 'assistant',
@@ -244,9 +269,9 @@ export default function ChatBox({ onTasksUpdated }) {
         metadata: res,
         created_at: new Date().toISOString(),
       })
-      if (res.tasks_created?.length > 0) {
+     if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
         onTasksUpdated?.()
-        toast.success(`Извлечено задач: ${res.tasks_created.length}`)
+        toast.success(`Файл проанализирован, задачи обновлены`)
       }
     } catch {
       toast.error('Ошибка загрузки файла')
