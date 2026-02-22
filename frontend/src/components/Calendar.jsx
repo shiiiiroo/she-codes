@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react'
+import React, { useEffect, useCallback, useState, useRef } from 'react'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
 import { useStore } from '../store'
@@ -243,7 +243,6 @@ function UndatedPanel({ tasks, onOpen }) {
 
   return (
     <div className="border-t border-[var(--border)] bg-[var(--surface)] flex-shrink-0">
-      {/* Header */}
       <button
         onClick={() => setCollapsed(c => !c)}
         className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface2)] transition-all cursor-pointer"
@@ -252,7 +251,6 @@ function UndatedPanel({ tasks, onOpen }) {
           Без даты
         </span>
         <div className="flex items-center gap-1.5">
-          {/* Mini priority dots preview */}
           {tasks.slice(0, 5).map((t, i) => {
             const prio = PRIO_MAP[t.priority] || PRIO_MAP.medium
             return <div key={i} className={`w-1.5 h-1.5 rounded-full ${prio.dot}`} />
@@ -263,7 +261,6 @@ function UndatedPanel({ tasks, onOpen }) {
         <span className="text-[10px] text-[var(--text3)] ml-1">{collapsed ? '▲' : '▼'}</span>
       </button>
 
-      {/* Task chips */}
       {!collapsed && (
         <div className="px-4 pb-3 flex flex-wrap gap-2">
           {sortTasks(tasks).map(t => {
@@ -274,23 +271,16 @@ function UndatedPanel({ tasks, onOpen }) {
                 key={t.id}
                 onClick={() => onOpen(t)}
                 className="group flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
-                style={{
-                  background: prio.bg,
-                  borderColor: prio.color + '30',
-                }}
+                style={{ background: prio.bg, borderColor: prio.color + '30' }}
               >
-                {/* Prio dot */}
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${prio.dot}`} />
-                {/* Title */}
                 <span className="text-xs font-medium max-w-[140px] truncate" style={{ color: prio.color }}>
                   {t.title}
                 </span>
-                {/* Cat label */}
                 <span className="text-[9px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
                   style={{ color: cat.color, background: cat.bg }}>
                   {cat.label}
                 </span>
-                {/* AI badge */}
                 {t.ai_generated && (
                   <span className="text-[9px] text-[var(--accent)] flex-shrink-0">✦</span>
                 )}
@@ -383,7 +373,6 @@ function WeekView({ tasks, currentDate, onOpen }) {
         const dayTasks = tasks.filter(t => {
           if (t.start_datetime && dayjs(t.start_datetime).format('YYYY-MM-DD') === ds) return true
           if (!t.start_datetime && t.deadline && dayjs(t.deadline).format('YYYY-MM-DD') === ds) return true
-          // Overdue tasks — show on today
           if (t.status === 'overdue' && ds === today) return true
           return false
         })
@@ -540,19 +529,30 @@ function YearView({ tasks, currentDate }) {
 export default function Calendar({ onAddTask, onRefresh }) {
   const { view, setView, currentDate, navigateDate, goToday, tasks, setTasks, undatedTasks, setUndatedTasks, setTips, setLoadInfo } = useStore()
   const [selectedTask, setSelectedTask] = useState(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   const load = useCallback(async () => {
     try {
       const [tasksRes, tipsRes] = await Promise.all([getTasks(view, currentDate), getTips()])
+      if (!mountedRef.current) return
       setTasks(tasksRes.data.tasks || [])
-      // Backend also returns undated tasks in same response
       if (tasksRes.data.undated) setUndatedTasks(tasksRes.data.undated)
       setTips(tipsRes.data.tips)
       setLoadInfo(tipsRes.data.load)
-    } catch (e) { console.error(e) }
-  }, [view, currentDate])
+    } catch (e) {
+      if (!mountedRef.current) return
+      console.error('[Calendar] load error:', e)
+    }
+  }, [view, currentDate, setTasks, setUndatedTasks, setTips, setLoadInfo])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
 
   const handleComplete = async (id, currentlyDone) => {
     try {
@@ -563,24 +563,31 @@ export default function Calendar({ onAddTask, onRefresh }) {
         await completeTask(id)
         toast.success('✓ Задача выполнена!')
       }
+      if (!mountedRef.current) return
       setSelectedTask(prev => prev?.id === id ? { ...prev, status: currentlyDone ? 'pending' : 'completed' } : prev)
       await load()
       onRefresh?.()
-    } catch { toast.error('Ошибка') }
+    } catch {
+      toast.error('Ошибка')
+    }
   }
 
   const handleDelete = async (id) => {
     try {
       await deleteTask(id)
       toast.success('Задача удалена')
+      if (!mountedRef.current) return
       setSelectedTask(null)
       await load()
       onRefresh?.()
-    } catch { toast.error('Ошибка') }
+    } catch {
+      toast.error('Ошибка')
+    }
   }
 
   const handleUpdate = async (id, data) => {
     await updateTask(id, data)
+    if (!mountedRef.current) return
     setSelectedTask(prev => prev?.id === id ? { ...prev, ...data } : prev)
     await load()
     onRefresh?.()
@@ -626,7 +633,7 @@ export default function Calendar({ onAddTask, onRefresh }) {
         {view === 'year'  && <YearView  tasks={tasks} currentDate={currentDate} />}
       </div>
 
-      {/* Undated tasks panel — collapsible strip at bottom */}
+      {/* Undated tasks panel */}
       <UndatedPanel tasks={undatedTasks} onOpen={setSelectedTask} />
 
       {/* Task modal */}

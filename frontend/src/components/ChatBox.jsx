@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { sendChat, sendVoice, uploadFile, getChatHistory } from '../api'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { sendChat, sendVoice, uploadFile, getChatHistory, clearChatHistory } from '../api'
 import { useStore } from '../store'
 import { Spinner } from './UI'
 import toast from 'react-hot-toast'
@@ -8,69 +8,76 @@ const SUGGESTIONS = [
   'Что мне сделать сегодня?',
   'Я перегружен, помоги расставить приоритеты',
   'Запланируй встречу завтра в 15:00',
-  'Какие задачи просрочены?',
+  'Удали задачу "Название"',
   'Как улучшить мою продуктивность?',
 ]
 
+const normMsg = (m) => ({ ...m, metadata: m.metadata || m.meta || {} })
+
 function Message({ msg }) {
   const isUser = msg.role === 'user'
-  const meta = msg.metadata || {}
+  const meta   = msg.metadata || {}
+  const tc = meta.tasks_created || []
+  const tu = meta.tasks_updated || []
+  const td = meta.tasks_deleted || []
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} fade-in`}>
-      <div className={`max-w-[85%] ${isUser ? '' : 'w-full'}`}>
-        {/* Avatar for AI */}
+      <div className={`max-w-[88%] ${isUser ? '' : 'w-full'}`}>
         {!isUser && (
           <div className="flex items-center gap-2 mb-1">
             <div className="w-5 h-5 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[10px] text-[var(--accent)]">✦</div>
             <span className="text-[10px] text-[var(--text3)] font-mono">TaskFlow AI</span>
           </div>
         )}
-
-        <div className={`rounded-2xl px-3 py-2.5 text-sm leading-relaxed ${
+        <div className={`rounded-2xl px-3 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
           isUser
             ? 'bg-[var(--accent)] text-white rounded-br-sm'
             : 'bg-[var(--surface2)] text-[var(--text)] rounded-bl-sm border border-[var(--border)]'
-        }`}>
-          {msg.content}
-        </div>
+        }`}>{msg.content}</div>
 
-        {/* Tasks created notification */}
-        {meta.tasks_to_create?.length > 0 && (
-          <div className="mt-2 flex flex-col gap-1">
-            {meta.tasks_to_create.slice(0, 3).map((t, i) => (
+        {tc.length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1">
+            {tc.slice(0,3).map((t,i) => (
               <div key={i} className="flex items-center gap-2 text-[11px] bg-[var(--accent)]/8 border border-[var(--accent)]/20 rounded-lg px-2.5 py-1.5">
-                <span className="text-[var(--accent)]">✓</span>
-                <span className="text-[var(--text2)] truncate">{t.title}</span>
-                <span className="ml-auto text-[var(--text3)] font-mono">{t.category}</span>
+                <span className="text-[var(--accent)]">+</span>
+                <span className="text-[var(--text2)] truncate flex-1">{t.title}</span>
+                <span className="text-[var(--text3)] font-mono">{t.category}</span>
               </div>
             ))}
           </div>
         )}
-
-        {/* Load warning */}
+        {tu.length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1">
+            {tu.slice(0,3).map((t,i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] bg-amber-400/8 border border-amber-400/20 rounded-lg px-2.5 py-1.5">
+                <span className="text-amber-400">↺</span>
+                <span className="text-[var(--text2)] truncate">{t.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {td.length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1">
+            {td.slice(0,3).map((title,i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] bg-red-400/8 border border-red-400/20 rounded-lg px-2.5 py-1.5">
+                <span className="text-red-400">✕</span>
+                <span className="text-[var(--text3)] line-through truncate">{title}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {meta.load_warning && (
-          <div className="mt-2 text-[11px] bg-amber-400/10 border border-amber-400/20 text-amber-300 rounded-lg px-2.5 py-1.5">
-            ⚠️ {meta.load_warning}
-          </div>
+          <div className="mt-1.5 text-[11px] bg-amber-400/10 border border-amber-400/20 text-amber-300 rounded-lg px-2.5 py-1.5">⚠️ {meta.load_warning}</div>
         )}
-
-        {/* Tips */}
-        {meta.tips?.map((tip, i) => (
-          <div key={i} className="mt-1.5 text-[11px] bg-emerald-400/8 border border-emerald-400/20 text-emerald-300 rounded-lg px-2.5 py-1.5">
-            💡 {tip}
-          </div>
+        {(meta.tips||[]).map((tip,i) => (
+          <div key={i} className="mt-1 text-[11px] bg-emerald-400/8 border border-emerald-400/20 text-emerald-300 rounded-lg px-2.5 py-1.5">💡 {typeof tip === 'string' ? tip : tip.tip || tip.text || ''}</div>
         ))}
-
-        {/* Transcript badge for voice */}
-        {msg.message_type === 'voice' && (
-          <div className="mt-1 text-[10px] text-[var(--text3)] font-mono flex items-center gap-1">
-            🎤 Голосовое сообщение
-          </div>
-        )}
-
+        {(meta.clarifying_questions||[]).map((q,i) => (
+          <div key={i} className="mt-1 text-[11px] bg-[var(--surface3)] border border-[var(--border)] text-[var(--text2)] rounded-lg px-2.5 py-1.5">❓ {typeof q === 'string' ? q : q.question || q.text || ''}</div>
+        ))}
         <div className="text-[9px] text-[var(--text3)] mt-1 font-mono">
-          {new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+          {new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit' })}
         </div>
       </div>
     </div>
@@ -84,7 +91,7 @@ function TypingIndicator() {
       <div className="flex gap-1 bg-[var(--surface2)] rounded-2xl rounded-bl-sm px-3 py-2.5 border border-[var(--border)]">
         {[0,1,2].map(i => (
           <div key={i} className="w-1.5 h-1.5 rounded-full bg-[var(--text3)]"
-            style={{ animation: `bounce 1.2s infinite`, animationDelay: `${i * 0.2}s` }} />
+            style={{ animation: 'bounce 1.2s infinite', animationDelay: `${i*0.2}s` }} />
         ))}
       </div>
     </div>
@@ -93,221 +100,274 @@ function TypingIndicator() {
 
 export default function ChatBox({ onTasksUpdated }) {
   const { messages, setMessages, addMessage, isAiTyping, setAiTyping } = useStore()
-  const [input, setInput] = useState('')
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingTime, setRecordingTime] = useState(0)
-  const messagesEndRef = useRef(null)
-  const inputRef = useRef(null)
-  const mediaRecorderRef = useRef(null)
-  const chunksRef = useRef([])
-  const recordTimerRef = useRef(null)
+  const [input, setInput]       = useState('')
+  const [isRecording, setIsRec] = useState(false)
+  const [recTime, setRecTime]   = useState(0)
+  const [showClear, setShowClear] = useState(false)
+  const bottomRef   = useRef(null)
+  const inputRef    = useRef(null)
+  const mrRef       = useRef(null)
+  const chunksRef   = useRef([])
+  const recTimerRef = useRef(null)
+  const mountedRef  = useRef(true)
+
+  // Track mounted state to prevent setState on unmounted component
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      // Cleanup recording timer if active
+      if (recTimerRef.current) {
+        clearInterval(recTimerRef.current)
+      }
+      // Stop recording if active
+      if (mrRef.current && mrRef.current.state === 'recording') {
+        try { mrRef.current.stop() } catch(_) {}
+      }
+    }
+  }, [])
 
   // Load history on mount
-  // ChatBox.jsx
+  useEffect(() => {
+    let cancelled = false
+    getChatHistory()
+      .then(res => {
+        if (cancelled) return
+        const raw = res.data || []
+        setMessages(Array.isArray(raw) ? raw.map(normMsg) : [])
+      })
+      .catch(err => {
+        if (cancelled) return
+        console.error('[ChatBox] Failed to load history:', err)
+        setMessages([])
+      })
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-useEffect(() => {
-  const initChat = async () => {
-    try {
-      // 1. Делаем запрос к API
-      const response = await getChatHistory();
-      
-      // 2. В axios данные приходят в поле .data
-      // На бэкенде в get_history ты возвращаешь список: return [msg_to_dict(m) for m in msgs]
-      const history = response.data;
-
-      if (Array.isArray(history)) {
-        console.log("История загружена:", history.length, "сообщений");
-        setMessages(history); // ЗАПИСЫВАЕМ В STORE
-      }
-    } catch (error) {
-      console.error("Ошибка загрузки истории чата:", error);
-    }
-  };
-
-  initChat();
-}, []); // Пустые скобки — сработает только 1 раз при обновлении страницы (F5)
-useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  // Scroll to bottom
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isAiTyping])
 
-  const handleSend = async (text = input.trim()) => {
-  if (!text) return
-  const tempId = Date.now()
-  setInput('')
-  
-  const userMsg = {
-    id: tempId,
-    role: 'user',
-    content: text,
-    message_type: 'text',
-    metadata: {},
-    created_at: new Date().toISOString(),
-  }
-  addMessage(userMsg)
-  setAiTyping(true)
+  const reloadHistory = useCallback(async () => {
+    try {
+      const res = await getChatHistory()
+      if (!mountedRef.current) return
+      const raw = res.data || []
+      setMessages(Array.isArray(raw) ? raw.map(normMsg) : [])
+    } catch (err) {
+      if (!mountedRef.current) return
+      console.error('[ChatBox] Failed to reload history:', err)
+    }
+  }, [setMessages])
 
-  try {
-    const res = await sendChat(text)
-    const data = res.data || res 
+  const handleSend = useCallback(async (text = input.trim()) => {
+    if (!text || isAiTyping) return
+    if (!mountedRef.current) return
 
-    const aiMsg = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      // ИСПРАВЛЕНИЕ: если ИИ прислал пустое сообщение, пишем системную фразу
-      content: data.message || "Задачи обновлены 👍", 
+    setInput('')
+
+    const tempId = `tmp_${Date.now()}`
+    addMessage({
+      id: tempId,
+      role: 'user',
+      content: text,
       message_type: 'text',
-      metadata: data,
-      created_at: new Date().toISOString(),
+      metadata: {},
+      created_at: new Date().toISOString()
+    })
+    setAiTyping(true)
+
+    try {
+      const data = await sendChat(text)
+      if (!mountedRef.current) return
+
+      await reloadHistory()
+      if (!mountedRef.current) return
+
+      const changed = data.tasks_created?.length || data.tasks_updated?.length || data.tasks_deleted?.length
+      if (changed) {
+        onTasksUpdated?.()
+        if (data.tasks_created?.length)  toast.success(`✦ Создано: ${data.tasks_created.length}`)
+        if (data.tasks_updated?.length)  toast.success(`↺ Обновлено: ${data.tasks_updated.length}`)
+        if (data.tasks_deleted?.length)  toast.success(`✕ Удалено: ${data.tasks_deleted.length}`)
+      }
+    } catch (e) {
+      if (!mountedRef.current) return
+      console.error('[ChatBox] Send error:', e)
+      setMessages(prev => prev.filter(m => m.id !== tempId))
+      addMessage({
+        id: `err_${Date.now()}`,
+        role: 'assistant',
+        content: 'Ошибка соединения. Проверьте подключение к серверу.',
+        message_type: 'text',
+        metadata: {},
+        created_at: new Date().toISOString()
+      })
+      toast.error('Ошибка связи с ИИ')
+    } finally {
+      if (mountedRef.current) setAiTyping(false)
     }
-    
-    addMessage(aiMsg)
+  }, [input, isAiTyping, addMessage, setAiTyping, reloadHistory, onTasksUpdated, setMessages])
 
-    if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
-      // Вызываем обновление календаря
-      onTasksUpdated?.() 
-      
-      if (data.tasks_created?.length > 0) toast.success(`Создано: ${data.tasks_created.length}`)
-      if (data.tasks_updated?.length > 0) toast.success(`Обновлено: ${data.tasks_updated.length}`)
-    }
-
-  } catch (e) {
-    toast.error("Ошибка связи с ИИ")
-  } finally {
-    setAiTyping(false)
-  }
-}
-
-  // Voice recording
-  const startRecording = async () => {
+  const startRec = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (!mountedRef.current) {
+        stream.getTracks().forEach(t => t.stop())
+        return
+      }
       const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-      mediaRecorderRef.current = mr
+      mrRef.current = mr
       chunksRef.current = []
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop())
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await handleVoiceSend(blob)
+        if (mountedRef.current) {
+          await handleVoiceSend(new Blob(chunksRef.current, { type: 'audio/webm' }))
+        }
       }
       mr.start()
-      setIsRecording(true)
-      setRecordingTime(0)
-      recordTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
+      if (mountedRef.current) {
+        setIsRec(true)
+        setRecTime(0)
+        recTimerRef.current = setInterval(() => {
+          if (mountedRef.current) setRecTime(t => t+1)
+        }, 1000)
+      }
     } catch {
       toast.error('Нет доступа к микрофону')
     }
   }
 
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop()
-    setIsRecording(false)
-    clearInterval(recordTimerRef.current)
+  const stopRec = () => {
+    try { mrRef.current?.stop() } catch(_) {}
+    if (mountedRef.current) setIsRec(false)
+    clearInterval(recTimerRef.current)
   }
 
   const handleVoiceSend = async (blob) => {
-    const userMsg = {
-      id: Date.now(),
+    if (!mountedRef.current) return
+    const tempId = `vtmp_${Date.now()}`
+    addMessage({
+      id: tempId,
       role: 'user',
-      content: '🎤 Голосовое сообщение...',
+      content: '🎤 Обрабатываю...',
       message_type: 'voice',
       metadata: {},
-      created_at: new Date().toISOString(),
-    }
-    addMessage(userMsg)
+      created_at: new Date().toISOString()
+    })
     setAiTyping(true)
-
     try {
-      const res = await sendVoice(blob)
-      const data = res.data || res
-
-      // Update user message with transcript
-      userMsg.content = `🎤 ${res.transcript || 'Голосовое сообщение'}`
-      const aiMsg = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: res.message,
-        message_type: 'text',
-        metadata: res,
-        created_at: new Date().toISOString(),
-      }
-      addMessage(aiMsg)
-
-      if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+      const data = await sendVoice(blob)
+      if (!mountedRef.current) return
+      await reloadHistory()
+      if (!mountedRef.current) return
+      if (data.tasks_created?.length || data.tasks_updated?.length || data.tasks_deleted?.length) {
         onTasksUpdated?.()
-        toast.success(`Задачи обработаны (голос)`)
       }
     } catch {
-      toast.error('Ошибка обработки голоса')
+      if (!mountedRef.current) return
+      toast.error('Ошибка голосового ввода')
+      setMessages(prev => prev.filter(m => m.id !== tempId))
     } finally {
-      setAiTyping(false)
+      if (mountedRef.current) setAiTyping(false)
     }
   }
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const userMsg = {
-      id: Date.now(),
+    const file = e.target.files?.[0]
+    if (!file || !mountedRef.current) return
+    const tempId = `ftmp_${Date.now()}`
+    addMessage({
+      id: tempId,
       role: 'user',
-      content: `📎 Загружен файл: ${file.name}`,
+      content: `📎 ${file.name}`,
       message_type: 'file',
       metadata: {},
-      created_at: new Date().toISOString(),
-    }
-    addMessage(userMsg)
+      created_at: new Date().toISOString()
+    })
     setAiTyping(true)
     try {
-      const res = await uploadFile(file)
-      const data = res.data || res
-
-      addMessage({
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: res.message,
-        message_type: 'text',
-        metadata: res,
-        created_at: new Date().toISOString(),
-      })
-     if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+      const data = await uploadFile(file)
+      if (!mountedRef.current) return
+      await reloadHistory()
+      if (!mountedRef.current) return
+      if (data.tasks_created?.length) {
         onTasksUpdated?.()
-        toast.success(`Файл проанализирован, задачи обновлены`)
+        toast.success(`Извлечено: ${data.tasks_created.length}`)
       }
     } catch {
+      if (!mountedRef.current) return
       toast.error('Ошибка загрузки файла')
+      setMessages(prev => prev.filter(m => m.id !== tempId))
     } finally {
-      setAiTyping(false)
-      e.target.value = ''
+      if (mountedRef.current) setAiTyping(false)
+    }
+    e.target.value = ''
+  }
+
+  const handleClear = async () => {
+    try {
+      await clearChatHistory()
+    } catch (err) {
+      console.error('[ChatBox] Clear error:', err)
+    } finally {
+      if (mountedRef.current) {
+        setMessages([])
+        setShowClear(false)
+        toast.success('История очищена')
+      }
     }
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-[var(--surface)]">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
         <div className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot" />
-        <span className="text-sm font-medium">ИИ-помощник</span>
-        <span className="ml-auto text-[10px] font-mono text-[var(--text3)] bg-[var(--surface2)] px-2 py-0.5 rounded">Claude</span>
+        <span className="text-sm font-medium">Armanda manager</span>
+        {messages.length > 0 && (
+          <button
+            onClick={() => setShowClear(true)}
+            className="ml-auto text-[10px] text-[var(--text3)] hover:text-red-400 cursor-pointer px-1.5 py-0.5 rounded transition-all"
+            title="Очистить историю"
+          >🗑</button>
+        )}
       </div>
+
+      {showClear && (
+        <div className="mx-3 mt-2 p-3 bg-red-400/10 border border-red-400/20 rounded-xl flex items-center gap-2">
+          <span className="text-xs text-red-400 flex-1">Очистить историю чата?</span>
+          <button
+            onClick={handleClear}
+            className="text-xs text-red-400 border border-red-400/30 px-2 py-1 rounded cursor-pointer hover:bg-red-400/10"
+          >Да</button>
+          <button
+            onClick={() => setShowClear(false)}
+            className="text-xs text-[var(--text3)] cursor-pointer px-2"
+          >Нет</button>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-        {messages.length === 0 && (
+        {messages.length === 0 && !isAiTyping && (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="text-3xl mb-3">✦</div>
+            <div className="text-3xl mb-3 opacity-40">✦</div>
             <div className="text-sm text-[var(--text2)] mb-1">Ваш AI-планировщик готов</div>
-            <div className="text-xs text-[var(--text3)]">Опишите задачи текстом или голосом</div>
+            <div className="text-xs text-[var(--text3)]">Опишите задачу или попросите изменить / удалить</div>
           </div>
         )}
-        {messages.map(msg => <Message key={msg.id} msg={msg} />)}
+        {messages.map((msg, i) => <Message key={msg.id || i} msg={msg} />)}
         {isAiTyping && <TypingIndicator />}
-        <div ref={messagesEndRef} />
+        <div ref={bottomRef} />
       </div>
 
-      {/* Quick suggestions */}
-      {messages.length === 0 && (
+      {/* Suggestions */}
+      {messages.length === 0 && !isAiTyping && (
         <div className="px-3 pb-2 flex flex-col gap-1">
-          {SUGGESTIONS.map((s, i) => (
+          {SUGGESTIONS.map((s,i) => (
             <button
               key={i}
               onClick={() => handleSend(s)}
@@ -319,16 +379,18 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Recording indicator */}
+      {/* Recording bar */}
       {isRecording && (
         <div className="mx-3 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-          <span className="text-xs text-red-400 font-mono">REC {String(Math.floor(recordingTime/60)).padStart(2,'0')}:{String(recordingTime%60).padStart(2,'0')}</span>
-          <button onClick={stopRecording} className="ml-auto text-xs text-red-400 hover:text-red-300 cursor-pointer">Стоп ■</button>
+          <span className="text-xs text-red-400 font-mono">
+            REC {String(Math.floor(recTime/60)).padStart(2,'0')}:{String(recTime%60).padStart(2,'0')}
+          </span>
+          <button onClick={stopRec} className="ml-auto text-xs text-red-400 hover:text-red-300 cursor-pointer">Стоп ■</button>
         </div>
       )}
 
-      {/* Input area */}
+      {/* Input */}
       <div className="p-3 border-t border-[var(--border)] flex-shrink-0">
         <div className="flex gap-2 items-end">
           <div className="flex-1 bg-[var(--surface2)] border border-[var(--border)] rounded-xl px-3 py-2 focus-within:border-[var(--accent)]/50 transition-all">
@@ -346,33 +408,23 @@ useEffect(() => {
                   handleSend()
                 }
               }}
-              placeholder="Напишите о задаче..."
+              placeholder="Напишите о задаче или попросите изменить / удалить..."
               className="w-full bg-transparent text-sm text-[var(--text)] placeholder:text-[var(--text3)] outline-none resize-none min-h-[20px]"
               rows={1}
               disabled={isAiTyping}
             />
           </div>
-
-          {/* File upload */}
-          <label className="p-2 rounded-xl border border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)] cursor-pointer transition-all flex-shrink-0" title="Прикрепить файл">
-            📎
-            <input type="file" className="hidden" accept=".txt,.md,.csv,.pdf" onChange={handleFileUpload} />
+          <label className="p-2 rounded-xl border border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)] cursor-pointer transition-all flex-shrink-0">
+            📎<input type="file" className="hidden" accept=".txt,.md,.csv,.pdf" onChange={handleFileUpload} />
           </label>
-
-          {/* Voice button */}
           <button
-            onClick={isRecording ? stopRecording : startRecording}
+            onClick={isRecording ? stopRec : startRec}
             className={`p-2 rounded-xl border transition-all flex-shrink-0 cursor-pointer ${
               isRecording
                 ? 'bg-red-500/20 border-red-500/40 text-red-400 animate-pulse'
                 : 'border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)]'
             }`}
-            title={isRecording ? 'Остановить запись' : 'Голосовое сообщение'}
-          >
-            🎤
-          </button>
-
-          {/* Send */}
+          >🎤</button>
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || isAiTyping}

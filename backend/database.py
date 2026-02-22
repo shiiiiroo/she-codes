@@ -1,10 +1,15 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Float, JSON, ForeignKey, Enum
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Float, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
+import os
 
-DATABASE_URL = "sqlite:///./taskflow.db"
+# Абсолютный путь к БД — всегда рядом с database.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'taskflow.db')}"
+
+print(f"[DB] База данных: {os.path.join(BASE_DIR, 'taskflow.db')}")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -54,24 +59,21 @@ class UserProfile(Base):
     email = Column(String(200), nullable=True)
     avatar_url = Column(String(500), nullable=True)
 
-    # Work/Study info
-    occupation = Column(String(200), nullable=True)        # "developer", "student", etc.
+    occupation = Column(String(200), nullable=True)
     workplace = Column(String(200), nullable=True)
-    work_schedule = Column(JSON, nullable=True)            # {"mon": "09:00-18:00", "fri": "09:00-17:00"}
+    work_schedule = Column(JSON, nullable=True)
     study_schedule = Column(JSON, nullable=True)
 
-    # Health / load preferences
-    max_daily_hours = Column(Float, default=8.0)           # max working hours per day
-    health_notes = Column(Text, nullable=True)             # e.g. "back pain, need breaks"
+    max_daily_hours = Column(Float, default=8.0)
+    health_notes = Column(Text, nullable=True)
     wake_time = Column(String(10), default="08:00")
     sleep_time = Column(String(10), default="23:00")
 
-    # AI memory — accumulated over time
-    ai_memory = Column(Text, nullable=True)                # JSON blob of facts about user
-    preferences = Column(JSON, nullable=True)              # UI + task preferences
+    ai_memory = Column(Text, nullable=True)
+    preferences = Column(JSON, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     tasks = relationship("Task", back_populates="user")
     chat_messages = relationship("ChatMessage", back_populates="user")
@@ -90,32 +92,25 @@ class Task(Base):
     priority = Column(String(20), default="medium")
     status = Column(String(20), default="pending")
 
-    # Timing
     start_datetime = Column(DateTime, nullable=True)
     end_datetime = Column(DateTime, nullable=True)
-    duration_minutes = Column(Integer, nullable=True)      # AI estimated duration
+    duration_minutes = Column(Integer, nullable=True)
     deadline = Column(DateTime, nullable=True)
 
-    # AI metadata
     ai_generated = Column(Boolean, default=False)
-    ai_notes = Column(Text, nullable=True)                 # AI reasoning about this task
-    urgency_score = Column(Float, default=0.5)             # 0.0 - 1.0
+    ai_notes = Column(Text, nullable=True)
+    urgency_score = Column(Float, default=0.5)
 
-    # Subtasks
-    subtasks = Column(JSON, default=list)                  # [{"title": "...", "done": false}]
-
-    # Files attached
+    subtasks = Column(JSON, default=list)
     attached_files = Column(JSON, default=list)
 
-    # Recurrence
     is_recurring = Column(Boolean, default=False)
-    recurrence_rule = Column(String(100), nullable=True)   # "daily", "weekly:mon,wed"
+    recurrence_rule = Column(String(100), nullable=True)
 
-    # Completion
     completed_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     user = relationship("UserProfile", back_populates="tasks")
 
@@ -125,12 +120,12 @@ class ChatMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
-    role = Column(String(20))                              # "user" | "assistant"
+    role = Column(String(20))
     content = Column(Text)
-    message_type = Column(String(20), default="text")     # "text" | "voice" | "file"
+    message_type = Column(String(20), default="text")
     file_path = Column(String(500), nullable=True)
-    meta = Column(JSON, nullable=True)                     # e.g. tasks created, tips given
-    created_at = Column(DateTime, default=datetime.utcnow)
+    meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UserProfile", back_populates="chat_messages")
 
@@ -140,12 +135,12 @@ class AIMemory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
-    memory_type = Column(String(50))                       # "preference", "fact", "pattern", "tip"
+    memory_type = Column(String(50))
     key = Column(String(200))
     value = Column(Text)
     confidence = Column(Float, default=1.0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     user = relationship("UserProfile", back_populates="ai_memories")
 
@@ -155,21 +150,20 @@ class DailyStats(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
-    date = Column(String(10))                              # "2025-02-21"
+    date = Column(String(10))
     tasks_total = Column(Integer, default=0)
     tasks_completed = Column(Integer, default=0)
     tasks_overdue = Column(Integer, default=0)
     tasks_postponed = Column(Integer, default=0)
     total_minutes_planned = Column(Integer, default=0)
     total_minutes_done = Column(Integer, default=0)
-    load_score = Column(Float, default=0.0)                # 0-1 overload indicator
-    all_done = Column(Boolean, default=False)              # for streak calculation
-    created_at = Column(DateTime, default=datetime.utcnow)
+    load_score = Column(Float, default=0.0)
+    all_done = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
-    # Seed default user if not exists
     db = SessionLocal()
     try:
         user = db.query(UserProfile).first()
@@ -184,5 +178,6 @@ def create_tables():
             )
             db.add(default_user)
             db.commit()
+            print("[DB] Создан пользователь по умолчанию")
     finally:
         db.close()

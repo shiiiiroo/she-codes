@@ -83,22 +83,23 @@ def delete_memory(mem_id: int, db: Session = Depends(get_db)):
 # ─── STATISTICS ──────────────────────────────────────────────────────────────
 
 def calculate_streak(db: Session, user_id: int) -> int:
-    """Count consecutive days where all_done = True ending today."""
-    today = date.today()
-    streak = 0
-    current = today
-    while True:
-        stat = db.query(DailyStats).filter(
-            DailyStats.user_id == user_id,
-            DailyStats.date == str(current),
-        ).first()
-        if stat and stat.all_done:
-            streak += 1
-            current -= timedelta(days=1)
-        else:
-            break
-    return streak
+    # Запрашиваем статистику за последние 90 дней одним махом
+    cutoff = date.today() - timedelta(days=90)
+    stats = db.query(DailyStats).filter(
+        DailyStats.user_id == user_id,
+        DailyStats.date >= str(cutoff)
+    ).order_by(DailyStats.date.desc()).all()
 
+    streak = 0
+    check_date = date.today()
+    
+    # Превращаем в словарь для быстрого поиска
+    stats_dict = {s.date: s.all_done for s in stats}
+    
+    while stats_dict.get(str(check_date)):
+        streak += 1
+        check_date -= timedelta(days=1)
+    return streak
 
 @stats_router.get("/overview")
 def get_overview(db: Session = Depends(get_db)):

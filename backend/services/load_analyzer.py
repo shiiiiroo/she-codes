@@ -4,7 +4,6 @@ Load analysis, tips generation, overdue detection.
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from database import Task, UserProfile, DailyStats
-import json
 
 
 def calculate_day_load(db: Session, target_date: date, user_id: int = 1) -> dict:
@@ -75,7 +74,6 @@ def generate_tips(db: Session, user_id: int = 1) -> list[str]:
     if load["critical_count"] > 0:
         tips.append(f"🔥 Сегодня {load['critical_count']} критических задач. Начните с них!")
 
-    # Check tomorrow load
     tomorrow = today + timedelta(days=1)
     tomorrow_load = calculate_day_load(db, tomorrow, user_id)
     if tomorrow_load["tasks_count"] == 0 and overdue:
@@ -110,7 +108,12 @@ def update_daily_stats(db: Session, user_id: int = 1, target_date: date = None):
     ]
     planned_min = sum(t.duration_minutes or 30 for t in day_tasks)
     done_min = sum(t.duration_minutes or 30 for t in completed)
-    load_score = min(planned_min / 480, 1.5)
+
+    # Правильный расчёт load_score: отношение запланированного к максимуму (0.0 - 1.5+)
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    max_minutes = (user.max_daily_hours if user else 8.0) * 60
+    load_score = min(planned_min / max_minutes, 1.5) if max_minutes > 0 else 0.0
+
     all_done = len(day_tasks) > 0 and len(completed) == len(day_tasks)
 
     existing = db.query(DailyStats).filter(

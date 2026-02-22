@@ -1,0 +1,3909 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/.env
+backend/.env.example
+backend/database.py
+backend/main.py
+backend/requirements.txt
+backend/routers/ai_agent.py
+backend/routers/profile_stats.py
+backend/routers/tasks.py
+backend/services/.env
+backend/services/agent.py
+backend/services/load_analyzer.py
+backend/services/transcribe.py
+backend/taskflow.db
+frontend/index.html
+frontend/package.json
+frontend/postcss.config.js
+frontend/src/api.js
+frontend/src/App.jsx
+frontend/src/components/Calendar.jsx
+frontend/src/components/ChatBox.jsx
+frontend/src/components/UI.jsx
+frontend/src/components/Widgets.jsx
+frontend/src/index.css
+frontend/src/main.jsx
+frontend/src/pages/Main.jsx
+frontend/src/pages/Profile.jsx
+frontend/src/pages/Statistics.jsx
+frontend/src/store.js
+frontend/tailwind.config.js
+frontend/vite.config.js
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/database.py">
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Float, JSON, ForeignKey, Enum
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
+import enum
+
+DATABASE_URL = "sqlite:///./taskflow.db"
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+class PriorityEnum(str, enum.Enum):
+    critical = "critical"
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class CategoryEnum(str, enum.Enum):
+    work = "work"
+    study = "study"
+    health = "health"
+    personal = "personal"
+    finance = "finance"
+    social = "social"
+    unsorted = "unsorted"
+
+
+class StatusEnum(str, enum.Enum):
+    pending = "pending"
+    in_progress = "in_progress"
+    completed = "completed"
+    overdue = "overdue"
+    postponed = "postponed"
+
+
+# ─── MODELS ───────────────────────────────────────────────────────────────────
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), default="User")
+    email = Column(String(200), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+
+    # Work/Study info
+    occupation = Column(String(200), nullable=True)        # "developer", "student", etc.
+    workplace = Column(String(200), nullable=True)
+    work_schedule = Column(JSON, nullable=True)            # {"mon": "09:00-18:00", "fri": "09:00-17:00"}
+    study_schedule = Column(JSON, nullable=True)
+
+    # Health / load preferences
+    max_daily_hours = Column(Float, default=8.0)           # max working hours per day
+    health_notes = Column(Text, nullable=True)             # e.g. "back pain, need breaks"
+    wake_time = Column(String(10), default="08:00")
+    sleep_time = Column(String(10), default="23:00")
+
+    # AI memory — accumulated over time
+    ai_memory = Column(Text, nullable=True)                # JSON blob of facts about user
+    preferences = Column(JSON, nullable=True)              # UI + task preferences
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tasks = relationship("Task", back_populates="user")
+    chat_messages = relationship("ChatMessage", back_populates="user")
+    ai_memories = relationship("AIMemory", back_populates="user")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
+
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(50), default="unsorted")
+    priority = Column(String(20), default="medium")
+    status = Column(String(20), default="pending")
+
+    # Timing
+    start_datetime = Column(DateTime, nullable=True)
+    end_datetime = Column(DateTime, nullable=True)
+    duration_minutes = Column(Integer, nullable=True)      # AI estimated duration
+    deadline = Column(DateTime, nullable=True)
+
+    # AI metadata
+    ai_generated = Column(Boolean, default=False)
+    ai_notes = Column(Text, nullable=True)                 # AI reasoning about this task
+    urgency_score = Column(Float, default=0.5)             # 0.0 - 1.0
+
+    # Subtasks
+    subtasks = Column(JSON, default=list)                  # [{"title": "...", "done": false}]
+
+    # Files attached
+    attached_files = Column(JSON, default=list)
+
+    # Recurrence
+    is_recurring = Column(Boolean, default=False)
+    recurrence_rule = Column(String(100), nullable=True)   # "daily", "weekly:mon,wed"
+
+    # Completion
+    completed_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("UserProfile", back_populates="tasks")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
+    role = Column(String(20))                              # "user" | "assistant"
+    content = Column(Text)
+    message_type = Column(String(20), default="text")     # "text" | "voice" | "file"
+    file_path = Column(String(500), nullable=True)
+    meta = Column(JSON, nullable=True)                     # e.g. tasks created, tips given
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("UserProfile", back_populates="chat_messages")
+
+
+class AIMemory(Base):
+    __tablename__ = "ai_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
+    memory_type = Column(String(50))                       # "preference", "fact", "pattern", "tip"
+    key = Column(String(200))
+    value = Column(Text)
+    confidence = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("UserProfile", back_populates="ai_memories")
+
+
+class DailyStats(Base):
+    __tablename__ = "daily_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user_profiles.id"), default=1)
+    date = Column(String(10))                              # "2025-02-21"
+    tasks_total = Column(Integer, default=0)
+    tasks_completed = Column(Integer, default=0)
+    tasks_overdue = Column(Integer, default=0)
+    tasks_postponed = Column(Integer, default=0)
+    total_minutes_planned = Column(Integer, default=0)
+    total_minutes_done = Column(Integer, default=0)
+    load_score = Column(Float, default=0.0)                # 0-1 overload indicator
+    all_done = Column(Boolean, default=False)              # for streak calculation
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+    # Seed default user if not exists
+    db = SessionLocal()
+    try:
+        user = db.query(UserProfile).first()
+        if not user:
+            default_user = UserProfile(
+                name="User",
+                max_daily_hours=8.0,
+                wake_time="08:00",
+                sleep_time="23:00",
+                ai_memory="{}",
+                preferences={},
+            )
+            db.add(default_user)
+            db.commit()
+    finally:
+        db.close()
+</file>
+
+<file path="backend/requirements.txt">
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+alembic==1.13.3
+python-multipart==0.0.12
+anthropic==0.36.2
+openai==1.51.2
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
+aiofiles==24.1.0
+httpx==0.27.2
+websockets==13.1
+</file>
+
+<file path="backend/routers/profile_stats.py">
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import date, timedelta
+from typing import Optional
+from pydantic import BaseModel
+from database import get_db, UserProfile, AIMemory, DailyStats, Task
+
+profile_router = APIRouter(prefix="/profile", tags=["profile"])
+stats_router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+# ─── PROFILE ─────────────────────────────────────────────────────────────────
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    occupation: Optional[str] = None
+    workplace: Optional[str] = None
+    work_schedule: Optional[dict] = None
+    study_schedule: Optional[dict] = None
+    max_daily_hours: Optional[float] = None
+    health_notes: Optional[str] = None
+    wake_time: Optional[str] = None
+    sleep_time: Optional[str] = None
+    preferences: Optional[dict] = None
+
+
+def profile_to_dict(u: UserProfile) -> dict:
+    return {
+        "id": u.id,
+        "name": u.name,
+        "email": u.email,
+        "occupation": u.occupation,
+        "workplace": u.workplace,
+        "work_schedule": u.work_schedule,
+        "study_schedule": u.study_schedule,
+        "max_daily_hours": u.max_daily_hours,
+        "health_notes": u.health_notes,
+        "wake_time": u.wake_time,
+        "sleep_time": u.sleep_time,
+        "preferences": u.preferences or {},
+        "created_at": u.created_at.isoformat(),
+    }
+
+
+@profile_router.get("/")
+def get_profile(db: Session = Depends(get_db)):
+    user = db.query(UserProfile).filter(UserProfile.id == 1).first()
+    if not user:
+        raise HTTPException(404, "Profile not found")
+    return profile_to_dict(user)
+
+
+@profile_router.patch("/")
+def update_profile(updates: ProfileUpdate, db: Session = Depends(get_db)):
+    user = db.query(UserProfile).filter(UserProfile.id == 1).first()
+    if not user:
+        raise HTTPException(404, "Profile not found")
+    for field, value in updates.dict(exclude_none=True).items():
+        setattr(user, field, value)
+    db.commit()
+    db.refresh(user)
+    return profile_to_dict(user)
+
+
+@profile_router.get("/memories")
+def get_memories(db: Session = Depends(get_db)):
+    mems = db.query(AIMemory).filter(AIMemory.user_id == 1).all()
+    return [{"id": m.id, "key": m.key, "value": m.value, "type": m.memory_type} for m in mems]
+
+
+@profile_router.delete("/memories/{mem_id}")
+def delete_memory(mem_id: int, db: Session = Depends(get_db)):
+    mem = db.query(AIMemory).filter(AIMemory.id == mem_id, AIMemory.user_id == 1).first()
+    if not mem:
+        raise HTTPException(404, "Memory not found")
+    db.delete(mem)
+    db.commit()
+    return {"ok": True}
+
+
+# ─── STATISTICS ──────────────────────────────────────────────────────────────
+
+def calculate_streak(db: Session, user_id: int) -> int:
+    """Count consecutive days where all_done = True ending today."""
+    today = date.today()
+    streak = 0
+    current = today
+    while True:
+        stat = db.query(DailyStats).filter(
+            DailyStats.user_id == user_id,
+            DailyStats.date == str(current),
+        ).first()
+        if stat and stat.all_done:
+            streak += 1
+            current -= timedelta(days=1)
+        else:
+            break
+    return streak
+
+
+@stats_router.get("/overview")
+def get_overview(db: Session = Depends(get_db)):
+    user_id = 1
+    all_tasks = db.query(Task).filter(Task.user_id == user_id).all()
+    completed = [t for t in all_tasks if t.status == "completed"]
+    overdue_list = [t for t in all_tasks if t.status not in ("completed",) and t.deadline and t.deadline.date() < date.today()]
+
+    # Category breakdown
+    from collections import Counter
+    cat_counts = Counter(t.category for t in all_tasks)
+    prio_counts = Counter(t.priority for t in all_tasks)
+
+    streak = calculate_streak(db, user_id)
+
+    return {
+        "total_tasks": len(all_tasks),
+        "completed": len(completed),
+        "overdue": len(overdue_list),
+        "pending": len([t for t in all_tasks if t.status == "pending"]),
+        "completion_rate": round(len(completed) / len(all_tasks) * 100) if all_tasks else 0,
+        "streak_days": streak,
+        "by_category": dict(cat_counts),
+        "by_priority": dict(prio_counts),
+    }
+
+
+@stats_router.get("/daily")
+def get_daily_stats(days: int = 30, db: Session = Depends(get_db)):
+    """Last N days of daily stats."""
+    user_id = 1
+    cutoff = date.today() - timedelta(days=days)
+    stats = (
+        db.query(DailyStats)
+        .filter(DailyStats.user_id == user_id, DailyStats.date >= str(cutoff))
+        .order_by(DailyStats.date.asc())
+        .all()
+    )
+    return [
+        {
+            "date": s.date,
+            "total": s.tasks_total,
+            "completed": s.tasks_completed,
+            "overdue": s.tasks_overdue,
+            "load_score": round(s.load_score * 100),
+            "all_done": s.all_done,
+            "minutes_planned": s.total_minutes_planned,
+            "minutes_done": s.total_minutes_done,
+        }
+        for s in stats
+    ]
+
+
+@stats_router.get("/heatmap")
+def get_heatmap(year: int = None, db: Session = Depends(get_db)):
+    """GitHub-style heatmap data for a year."""
+    if not year:
+        year = date.today().year
+    stats = (
+        db.query(DailyStats)
+        .filter(DailyStats.user_id == 1, DailyStats.date.startswith(str(year)))
+        .all()
+    )
+    return {
+        s.date: {
+            "completed": s.tasks_completed,
+            "total": s.tasks_total,
+            "all_done": s.all_done,
+        }
+        for s in stats
+    }
+</file>
+
+<file path="backend/services/.env">
+
+</file>
+
+<file path="backend/services/load_analyzer.py">
+"""
+Load analysis, tips generation, overdue detection.
+"""
+from datetime import datetime, date, timedelta
+from sqlalchemy.orm import Session
+from database import Task, UserProfile, DailyStats
+import json
+
+
+def calculate_day_load(db: Session, target_date: date, user_id: int = 1) -> dict:
+    """Returns load metrics for a given day."""
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    max_minutes = (user.max_daily_hours if user else 8.0) * 60
+
+    tasks = db.query(Task).filter(
+        Task.user_id == user_id,
+        Task.status != "completed",
+    ).all()
+
+    day_tasks = [
+        t for t in tasks
+        if t.start_datetime and t.start_datetime.date() == target_date
+    ]
+
+    planned_minutes = sum(t.duration_minutes or 30 for t in day_tasks)
+    critical = [t for t in day_tasks if t.priority == "critical"]
+    high = [t for t in day_tasks if t.priority == "high"]
+
+    load_pct = min(planned_minutes / max_minutes, 1.5) if max_minutes else 0
+    overloaded = load_pct > 1.0
+
+    return {
+        "date": str(target_date),
+        "tasks_count": len(day_tasks),
+        "planned_minutes": planned_minutes,
+        "max_minutes": int(max_minutes),
+        "load_percent": round(load_pct * 100),
+        "overloaded": overloaded,
+        "critical_count": len(critical),
+        "high_count": len(high),
+    }
+
+
+def get_overdue_tasks(db: Session, user_id: int = 1) -> list:
+    now = datetime.utcnow()
+    tasks = db.query(Task).filter(
+        Task.user_id == user_id,
+        Task.status == "pending",
+    ).all()
+    overdue = []
+    for t in tasks:
+        if t.deadline and t.deadline < now:
+            overdue.append(t)
+        elif t.start_datetime and t.end_datetime and t.end_datetime < now:
+            overdue.append(t)
+    return overdue
+
+
+def generate_tips(db: Session, user_id: int = 1) -> list[str]:
+    tips = []
+    today = date.today()
+    load = calculate_day_load(db, today, user_id)
+    overdue = get_overdue_tasks(db, user_id)
+
+    if load["overloaded"]:
+        tips.append(
+            f"⚠️ Сегодня запланировано {load['planned_minutes']} мин "
+            f"из максимума {load['max_minutes']} мин. Рассмотрите перенос части задач."
+        )
+
+    if overdue:
+        titles = ", ".join(t.title for t in overdue[:3])
+        tips.append(f"🔴 Просрочено задач: {len(overdue)}. Например: {titles}. Хотите перенести?")
+
+    if load["critical_count"] > 0:
+        tips.append(f"🔥 Сегодня {load['critical_count']} критических задач. Начните с них!")
+
+    # Check tomorrow load
+    tomorrow = today + timedelta(days=1)
+    tomorrow_load = calculate_day_load(db, tomorrow, user_id)
+    if tomorrow_load["tasks_count"] == 0 and overdue:
+        tips.append("💡 Завтра у вас свободно — можно перенести просроченные задачи туда.")
+
+    if not tips:
+        if load["tasks_count"] == 0:
+            tips.append("✅ На сегодня задач нет. Самое время запланировать день!")
+        else:
+            tips.append(f"👍 Загрузка: {load['load_percent']}%. Отличный темп!")
+
+    return tips
+
+
+def update_daily_stats(db: Session, user_id: int = 1, target_date: date = None):
+    """Snapshot today's stats into DailyStats table."""
+    if target_date is None:
+        target_date = date.today()
+    date_str = str(target_date)
+
+    all_tasks = db.query(Task).filter(Task.user_id == user_id).all()
+    day_tasks = [
+        t for t in all_tasks
+        if (t.start_datetime and t.start_datetime.date() == target_date)
+        or (t.deadline and t.deadline.date() == target_date)
+    ]
+
+    completed = [t for t in day_tasks if t.status == "completed"]
+    overdue = [
+        t for t in day_tasks
+        if t.status == "pending" and t.deadline and t.deadline.date() < target_date
+    ]
+    planned_min = sum(t.duration_minutes or 30 for t in day_tasks)
+    done_min = sum(t.duration_minutes or 30 for t in completed)
+    load_score = min(planned_min / 480, 1.5)
+    all_done = len(day_tasks) > 0 and len(completed) == len(day_tasks)
+
+    existing = db.query(DailyStats).filter(
+        DailyStats.user_id == user_id,
+        DailyStats.date == date_str,
+    ).first()
+
+    if existing:
+        existing.tasks_total = len(day_tasks)
+        existing.tasks_completed = len(completed)
+        existing.tasks_overdue = len(overdue)
+        existing.total_minutes_planned = planned_min
+        existing.total_minutes_done = done_min
+        existing.load_score = load_score
+        existing.all_done = all_done
+    else:
+        stats = DailyStats(
+            user_id=user_id,
+            date=date_str,
+            tasks_total=len(day_tasks),
+            tasks_completed=len(completed),
+            tasks_overdue=len(overdue),
+            total_minutes_planned=planned_min,
+            total_minutes_done=done_min,
+            load_score=load_score,
+            all_done=all_done,
+        )
+        db.add(stats)
+    db.commit()
+</file>
+
+<file path="frontend/index.html">
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — AI Task Manager</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
+</file>
+
+<file path="frontend/package.json">
+{
+  "name": "taskflow-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.27.0",
+    "dayjs": "^1.11.13",
+    "recharts": "^2.13.0",
+    "lucide-react": "^0.263.1",
+    "axios": "^1.7.7",
+    "zustand": "^5.0.1",
+    "react-hot-toast": "^2.4.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "vite": "^5.4.8",
+    "tailwindcss": "^3.4.14",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47"
+  }
+}
+</file>
+
+<file path="frontend/postcss.config.js">
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+</file>
+
+<file path="frontend/src/App.jsx">
+import React from 'react'
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
+import MainPage from './pages/Main'
+import ProfilePage from './pages/Profile'
+import Statistics from './pages/Statistics'
+
+const NAV = [
+  { to: '/', label: 'Главная', icon: '◫' },
+  { to: '/profile', label: 'Профиль', icon: '◉' },
+  { to: '/stats', label: 'Аналитика', icon: '◈' },
+]
+
+function Sidebar() {
+  return (
+    <div className="w-[200px] flex-shrink-0 border-r border-[var(--border)] bg-[var(--surface)] flex flex-col py-5 px-3 gap-1">
+      {/* Logo */}
+      <div className="flex items-center gap-2.5 px-3 mb-6">
+        <div className="w-7 h-7 bg-[var(--accent)] rounded-lg flex items-center justify-center text-white text-xs font-bold">TF</div>
+        <span className="font-semibold text-sm tracking-tight">TaskFlow</span>
+      </div>
+
+      {/* Nav */}
+      {NAV.map(n => (
+        <NavLink
+          key={n.to}
+          to={n.to}
+          end={n.to === '/'}
+          className={({ isActive }) =>
+            `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
+              isActive
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text3)] hover:text-[var(--text)] hover:bg-[var(--surface2)]'
+            }`
+          }
+        >
+          <span className="text-base">{n.icon}</span>
+          {n.label}
+        </NavLink>
+      ))}
+
+      {/* Bottom status */}
+      <div className="mt-auto px-3 py-2 bg-[var(--surface2)] rounded-lg">
+        <div className="flex items-center gap-1.5 mb-1">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot" />
+          <span className="text-[10px] text-[var(--text3)] font-mono">ИИ активен</span>
+        </div>
+        <div className="text-[9px] text-[var(--text3)] font-mono">Claude · SQLite</div>
+      </div>
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <div className="flex-1 overflow-hidden">
+          <Routes>
+            <Route path="/" element={<MainPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/stats" element={<Statistics />} />
+          </Routes>
+        </div>
+      </div>
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'var(--surface2)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            borderRadius: '10px',
+            fontSize: '13px',
+          },
+          success: { iconTheme: { primary: '#34d399', secondary: '#000' } },
+          error: { iconTheme: { primary: '#ef4444', secondary: '#000' } },
+        }}
+      />
+    </BrowserRouter>
+  )
+}
+</file>
+
+<file path="frontend/src/components/UI.jsx">
+import React from 'react'
+
+// ─── PRIORITY BADGE ────────────────────────────────────────────────────────
+export const PriorityBadge = ({ priority }) => {
+  const map = {
+    critical: { label: 'КРИТИЧНО', color: 'text-red-400 border-red-400/30 bg-red-400/10' },
+    high:     { label: 'ВЫСОКИЙ', color: 'text-amber-400 border-amber-400/30 bg-amber-400/10' },
+    medium:   { label: 'СРЕДНИЙ', color: 'text-blue-400 border-blue-400/30 bg-blue-400/10' },
+    low:      { label: 'НИЗКИЙ',  color: 'text-gray-500 border-gray-500/30 bg-gray-500/10' },
+  }
+  const cfg = map[priority] || map.medium
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-mono font-medium ${cfg.color}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
+// ─── CATEGORY CHIP ─────────────────────────────────────────────────────────
+const CAT_MAP = {
+  work:     { label: 'Работа',   cls: 'cat-work' },
+  study:    { label: 'Учёба',    cls: 'cat-study' },
+  health:   { label: 'Здоровье', cls: 'cat-health' },
+  personal: { label: 'Личное',   cls: 'cat-personal' },
+  finance:  { label: 'Финансы',  cls: 'cat-finance' },
+  social:   { label: 'Социальное', cls: 'cat-social' },
+  unsorted: { label: 'Без сортировки', cls: 'cat-unsorted' },
+}
+
+export const CategoryChip = ({ category }) => {
+  const cfg = CAT_MAP[category] || CAT_MAP.unsorted
+  return <span className={`cat-chip ${cfg.cls}`}>{cfg.label}</span>
+}
+
+// ─── DURATION LABEL ────────────────────────────────────────────────────────
+export const DurationLabel = ({ minutes }) => {
+  if (!minutes) return null
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  const label = h > 0 ? `${h}ч ${m > 0 ? m + 'м' : ''}` : `${m}м`
+  return <span className="text-[11px] text-[var(--text3)] font-mono">⏱ {label}</span>
+}
+
+// ─── BUTTON ────────────────────────────────────────────────────────────────
+export const Btn = ({ children, onClick, variant = 'primary', size = 'md', className = '', disabled = false, type = 'button' }) => {
+  const sizes = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-sm' }
+  const variants = {
+    primary: 'bg-[var(--accent)] text-white hover:bg-[#7c75ff] disabled:opacity-40',
+    outline: 'border border-[var(--border)] text-[var(--text2)] hover:bg-[var(--surface2)] hover:text-[var(--text)]',
+    ghost:   'text-[var(--text2)] hover:bg-[var(--surface2)] hover:text-[var(--text)]',
+    danger:  'border border-red-400/20 text-red-400 hover:bg-red-400/10',
+    success: 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/20 hover:bg-emerald-500/30',
+  }
+  return (
+    <button
+      type={type}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-lg font-medium transition-all cursor-pointer ${sizes[size]} ${variants[variant]} ${className}`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ─── INPUT ─────────────────────────────────────────────────────────────────
+export const Input = ({ label, className = '', ...props }) => (
+  <div className="flex flex-col gap-1">
+    {label && <label className="text-[10px] uppercase tracking-widest text-[var(--text3)] font-mono">{label}</label>}
+    <input
+      className={`bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text3)] outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30 transition-all ${className}`}
+      {...props}
+    />
+  </div>
+)
+
+// ─── SELECT ────────────────────────────────────────────────────────────────
+export const Select = ({ label, options, className = '', ...props }) => (
+  <div className="flex flex-col gap-1">
+    {label && <label className="text-[10px] uppercase tracking-widest text-[var(--text3)] font-mono">{label}</label>}
+    <select
+      className={`bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] transition-all cursor-pointer ${className}`}
+      {...props}
+    >
+      {options.map(o => (
+        <option key={o.value} value={o.value} style={{ background: '#1a1a28' }}>{o.label}</option>
+      ))}
+    </select>
+  </div>
+)
+
+// ─── TEXTAREA ──────────────────────────────────────────────────────────────
+export const Textarea = ({ label, className = '', ...props }) => (
+  <div className="flex flex-col gap-1">
+    {label && <label className="text-[10px] uppercase tracking-widest text-[var(--text3)] font-mono">{label}</label>}
+    <textarea
+      className={`bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text3)] outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30 transition-all resize-none ${className}`}
+      {...props}
+    />
+  </div>
+)
+
+// ─── SPINNER ────────────────────────────────────────────────────────────────
+export const Spinner = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="animate-spin">
+    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2" />
+    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+)
+
+// ─── TASK CARD ─────────────────────────────────────────────────────────────
+export const TaskCard = ({ task, onComplete, onDelete, onPostpone, compact = false }) => {
+  const isOverdue = task.status !== 'completed' && task.deadline && new Date(task.deadline) < new Date()
+  const isDone = task.status === 'completed'
+
+  return (
+    <div className={`card card-hover p-3 transition-all fade-in ${isDone ? 'task-done opacity-60' : ''} ${isOverdue ? 'border-l-2 border-red-500/50' : ''}`}>
+      <div className="flex items-start gap-3">
+        {/* Checkbox */}
+        <button
+          onClick={() => !isDone && onComplete?.(task.id)}
+          className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all cursor-pointer ${
+            isDone ? 'bg-emerald-500/20 border-emerald-500/40' : 'border-[var(--border)] hover:border-[var(--accent)]'
+          }`}
+        >
+          {isDone && <span className="text-emerald-400 text-[10px]">✓</span>}
+        </button>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-medium task-title-el ${isOverdue && !isDone ? 'text-red-400' : ''}`}>
+            {task.title}
+          </div>
+          {!compact && task.description && (
+            <div className="text-xs text-[var(--text3)] mt-0.5 line-clamp-1">{task.description}</div>
+          )}
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <CategoryChip category={task.category} />
+            <PriorityBadge priority={task.priority} />
+            {task.duration_minutes && <DurationLabel minutes={task.duration_minutes} />}
+            {isOverdue && !isDone && (
+              <span className="text-[10px] text-red-400 font-mono">ПРОСРОЧЕНО</span>
+            )}
+          </div>
+          {/* Subtasks progress */}
+          {!compact && task.subtasks?.length > 0 && (
+            <div className="mt-2">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="flex-1 h-1 bg-[var(--surface3)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--accent)] rounded-full transition-all"
+                    style={{ width: `${(task.subtasks.filter(s => s.done).length / task.subtasks.length) * 100}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono text-[var(--text3)]">
+                  {task.subtasks.filter(s => s.done).length}/{task.subtasks.length}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {isOverdue && onPostpone && (
+            <button onClick={() => onPostpone(task)} className="p-1 rounded hover:bg-amber-400/10 text-amber-400 cursor-pointer" title="Перенести">
+              ↷
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={() => onDelete(task.id)} className="p-1 rounded hover:bg-red-400/10 text-[var(--text3)] hover:text-red-400 cursor-pointer" title="Удалить">
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── STAT CARD ─────────────────────────────────────────────────────────────
+export const StatCard = ({ label, value, sub, color = 'accent', icon }) => {
+  const colorMap = {
+    accent: 'text-[var(--accent)]',
+    green: 'text-emerald-400',
+    red: 'text-red-400',
+    gold: 'text-amber-400',
+    blue: 'text-blue-400',
+  }
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className={`text-3xl font-bold tracking-tight ${colorMap[color]}`}>{value}</div>
+          <div className="text-sm text-[var(--text2)] mt-1">{label}</div>
+          {sub && <div className="text-xs text-[var(--text3)] mt-0.5">{sub}</div>}
+        </div>
+        {icon && <div className="text-2xl opacity-30">{icon}</div>}
+      </div>
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/components/Widgets.jsx">
+import React, { useState } from 'react'
+import { useStore } from '../store'
+import { createTask, postponeTask } from '../api'
+import { Input, Select, Textarea, Btn } from './UI'
+import toast from 'react-hot-toast'
+import dayjs from 'dayjs'
+
+// ─── TIPS BAR ───────────────────────────────────────────────────────────────
+export function TipsBar({ onRefresh }) {
+  const { tips, loadInfo, overdueTasks } = useStore()
+  const [dismissed, setDismissed] = useState([])
+
+  const visibleTips = tips.filter((_, i) => !dismissed.includes(i))
+
+  if (!visibleTips.length && !loadInfo) return null
+
+  const loadPct = loadInfo?.load_percent || 0
+  const loadColor = loadPct > 100 ? 'bg-red-500' : loadPct > 75 ? 'bg-amber-400' : 'bg-emerald-400'
+
+  return (
+    <div className="border-b border-[var(--border)] px-4 py-2.5 flex items-center gap-4 overflow-x-auto flex-shrink-0 bg-[var(--surface)]/50">
+      {/* Load indicator */}
+      {loadInfo && (
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="text-[10px] font-mono text-[var(--text3)] uppercase">Нагрузка</span>
+          <div className="w-20 h-1.5 bg-[var(--surface3)] rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${loadColor}`} style={{ width: `${Math.min(loadPct, 100)}%` }} />
+          </div>
+          <span className={`text-[11px] font-mono ${loadPct > 100 ? 'text-red-400' : loadPct > 75 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            {loadPct}%
+          </span>
+        </div>
+      )}
+
+      <div className="w-px h-4 bg-[var(--border)] flex-shrink-0" />
+
+      {/* Tips */}
+      <div className="flex items-center gap-2 overflow-x-auto">
+        {visibleTips.map((tip, i) => (
+          <div key={i} className="flex items-center gap-2 bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 flex-shrink-0 fade-in">
+            <span className="text-[11px] text-[var(--text2)] whitespace-nowrap">{tip}</span>
+            <button
+              onClick={() => setDismissed(d => [...d, i])}
+              className="text-[var(--text3)] hover:text-[var(--text)] cursor-pointer text-xs ml-1"
+            >✕</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── ADD TASK FORM ──────────────────────────────────────────────────────────
+const CAT_OPTIONS = [
+  { value: 'work', label: '💼 Работа' },
+  { value: 'study', label: '📚 Учёба' },
+  { value: 'health', label: '🏃 Здоровье' },
+  { value: 'personal', label: '🙂 Личное' },
+  { value: 'finance', label: '💰 Финансы' },
+  { value: 'social', label: '👥 Социальное' },
+  { value: 'unsorted', label: '📋 Без сортировки' },
+]
+
+const PRIO_OPTIONS = [
+  { value: 'critical', label: '🔴 Критично' },
+  { value: 'high', label: '🟡 Высокий' },
+  { value: 'medium', label: '🔵 Средний' },
+  { value: 'low', label: '⚪ Низкий' },
+]
+
+export function AddTaskForm({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    title: '',
+    description: '',
+    category: 'work',
+    priority: 'medium',
+    duration_minutes: '',
+    start_datetime: '',
+    deadline: '',
+    subtasks_raw: '',
+  })
+  const [loading, setLoading] = useState(false)
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!form.title.trim()) { toast.error('Введите название'); return }
+    setLoading(true)
+    try {
+      const payload = {
+        title: form.title.trim(),
+        description: form.description || null,
+        category: form.category,
+        priority: form.priority,
+        duration_minutes: form.duration_minutes ? parseInt(form.duration_minutes) : null,
+        start_datetime: form.start_datetime || null,
+        deadline: form.deadline || null,
+        subtasks: form.subtasks_raw
+          ? form.subtasks_raw.split('\n').map(s => s.trim()).filter(Boolean).map(t => ({ title: t, done: false }))
+          : [],
+      }
+      await createTask(payload)
+      toast.success('Задача создана!')
+      onCreated?.()
+      onClose?.()
+    } catch {
+      toast.error('Ошибка создания задачи')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl slide-up">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+          <h2 className="text-base font-semibold">Новая задача</h2>
+          <button onClick={onClose} className="text-[var(--text3)] hover:text-[var(--text)] cursor-pointer">✕</button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+          <Input
+            label="Название *"
+            placeholder="Что нужно сделать?"
+            value={form.title}
+            onChange={e => set('title', e.target.value)}
+            autoFocus
+          />
+
+          <Textarea
+            label="Описание"
+            placeholder="Детали задачи..."
+            value={form.description}
+            onChange={e => set('description', e.target.value)}
+            rows={2}
+          />
+
+          <div className="grid grid-cols-2 gap-3">
+            <Select label="Категория" options={CAT_OPTIONS} value={form.category} onChange={e => set('category', e.target.value)} />
+            <Select label="Приоритет" options={PRIO_OPTIONS} value={form.priority} onChange={e => set('priority', e.target.value)} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <Input label="Длительность (мин)" type="number" placeholder="60" value={form.duration_minutes} onChange={e => set('duration_minutes', e.target.value)} />
+            <Input label="Начало" type="datetime-local" value={form.start_datetime} onChange={e => set('start_datetime', e.target.value)} />
+            <Input label="Дедлайн" type="datetime-local" value={form.deadline} onChange={e => set('deadline', e.target.value)} />
+          </div>
+
+          <Textarea
+            label="Подзадачи (каждая с новой строки)"
+            placeholder={"Шаг 1\nШаг 2\nШаг 3"}
+            value={form.subtasks_raw}
+            onChange={e => set('subtasks_raw', e.target.value)}
+            rows={3}
+          />
+
+          <div className="flex gap-2 justify-end pt-1 border-t border-[var(--border)]">
+            <Btn variant="ghost" onClick={onClose} type="button">Отмена</Btn>
+            <Btn variant="primary" type="submit" disabled={loading}>
+              {loading ? 'Создание...' : 'Создать задачу'}
+            </Btn>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── UNSORTED PANEL ─────────────────────────────────────────────────────────
+export function UnsortedPanel({ tasks }) {
+  if (!tasks?.length) return null
+  return (
+    <div className="card p-3 mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-mono text-[var(--text3)] uppercase tracking-wider">Без сортировки</span>
+        <span className="text-[10px] bg-[var(--surface3)] text-[var(--text3)] px-1.5 py-0.5 rounded font-mono">{tasks.length}</span>
+      </div>
+      {tasks.map(t => (
+        <div key={t.id} className="flex items-center gap-2 py-1.5 border-b border-[var(--border)] last:border-0">
+          <span className="text-[10px] font-mono text-amber-400">?</span>
+          <span className="text-xs text-[var(--text2)] flex-1 truncate">{t.title}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/index.css">
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a0a12;
+  --surface: #11111c;
+  --surface2: #181828;
+  --surface3: #1f1f33;
+  --border: rgba(255,255,255,0.07);
+  --accent: #6c63ff;
+  --accent-soft: rgba(108,99,255,0.12);
+  --text: #e2e2f0;
+  --text2: #9090b0;
+  --text3: #555575;
+  --red: #ff4d6d;
+  --red-soft: rgba(255,77,109,0.12);
+  --gold: #f59e0b;
+  --gold-soft: rgba(245,158,11,0.12);
+  --green: #34d399;
+  --green-soft: rgba(52,211,153,0.12);
+  --blue: #60a5fa;
+  --blue-soft: rgba(96,165,250,0.12);
+  --purple: #a78bfa;
+  --purple-soft: rgba(167,139,250,0.12);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* Utility classes */
+.glass {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.card-hover {
+  transition: all 0.2s;
+}
+.card-hover:hover {
+  border-color: rgba(108,99,255,0.3);
+  box-shadow: 0 0 0 1px rgba(108,99,255,0.1), 0 8px 24px rgba(0,0,0,0.3);
+}
+
+/* Priority colors */
+.priority-critical { color: var(--red); }
+.priority-high { color: var(--gold); }
+.priority-medium { color: var(--blue); }
+.priority-low { color: var(--text3); }
+
+/* Category chips */
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', monospace;
+}
+.cat-work { background: var(--blue-soft); color: var(--blue); }
+.cat-study { background: var(--purple-soft); color: var(--purple); }
+.cat-health { background: var(--green-soft); color: var(--green); }
+.cat-personal { background: var(--accent-soft); color: var(--accent); }
+.cat-finance { background: var(--gold-soft); color: var(--gold); }
+.cat-social { background: rgba(244,114,182,0.12); color: #f472b6; }
+.cat-unsorted { background: rgba(100,100,120,0.15); color: var(--text3); }
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 0.25s ease; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.slide-up { animation: slideUp 0.3s ease; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.pulse-dot { animation: pulse-dot 2s infinite; }
+
+/* Task card complete strike */
+.task-done .task-title-el {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+</file>
+
+<file path="frontend/src/main.jsx">
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
+</file>
+
+<file path="frontend/src/pages/Profile.jsx">
+import React, { useEffect, useState } from 'react'
+import { getProfile, updateProfile, getMemories, deleteMemory } from '../api'
+import { Input, Select, Textarea, Btn, StatCard } from '../components/UI'
+import toast from 'react-hot-toast'
+
+const WORK_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const DAY_LABELS = { mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс' }
+
+export default function ProfilePage() {
+  const [profile, setProfile] = useState(null)
+  const [memories, setMemories] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({})
+
+  useEffect(() => {
+    Promise.all([getProfile(), getMemories()])
+      .then(([pr, mr]) => {
+        setProfile(pr.data)
+        setForm({
+          name: pr.data.name || '',
+          email: pr.data.email || '',
+          occupation: pr.data.occupation || '',
+          workplace: pr.data.workplace || '',
+          max_daily_hours: pr.data.max_daily_hours || 8,
+          health_notes: pr.data.health_notes || '',
+          wake_time: pr.data.wake_time || '08:00',
+          sleep_time: pr.data.sleep_time || '23:00',
+          work_schedule: pr.data.work_schedule || {},
+          study_schedule: pr.data.study_schedule || {},
+        })
+        setMemories(mr.data)
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const setScheduleTime = (type, day, value) => {
+    const key = type + '_schedule'
+    setForm(f => ({
+      ...f,
+      [key]: { ...f[key], [day]: value },
+    }))
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await updateProfile(form)
+      toast.success('Профиль сохранён')
+    } catch {
+      toast.error('Ошибка сохранения')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeMemory = async (id) => {
+    await deleteMemory(id)
+    setMemories(m => m.filter(x => x.id !== id))
+    toast.success('Удалено из памяти ИИ')
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-[var(--text3)]">Загрузка...</div>
+    </div>
+  )
+
+  return (
+    <div className="overflow-y-auto h-full p-8 max-w-3xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight">Профиль</h1>
+        <p className="text-sm text-[var(--text3)] mt-1">Информация о вас, которую ИИ использует для персонализации</p>
+      </div>
+
+      {/* Basic info */}
+      <section className="card p-6 mb-5">
+        <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-4">Основная информация</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <Input label="Имя" value={form.name} onChange={e => set('name', e.target.value)} />
+          <Input label="Email" value={form.email} onChange={e => set('email', e.target.value)} />
+          <Input label="Профессия / сфера" placeholder="Разработчик, студент..." value={form.occupation} onChange={e => set('occupation', e.target.value)} />
+          <Input label="Место работы / учёбы" placeholder="Компания, университет..." value={form.workplace} onChange={e => set('workplace', e.target.value)} />
+        </div>
+      </section>
+
+      {/* Work schedule */}
+      <section className="card p-6 mb-5">
+        <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-4">График работы</h2>
+        <p className="text-xs text-[var(--text3)] mb-4">Укажите рабочие часы по дням. Оставьте пустым — выходной.</p>
+        <div className="grid grid-cols-7 gap-2">
+          {WORK_DAYS.map(day => (
+            <div key={day} className="flex flex-col gap-1">
+              <label className="text-[10px] font-mono text-[var(--text3)] text-center uppercase">{DAY_LABELS[day]}</label>
+              <input
+                type="text"
+                placeholder="09-18"
+                value={form.work_schedule?.[day] || ''}
+                onChange={e => setScheduleTime('work', day, e.target.value)}
+                className="bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-xs text-center text-[var(--text)] outline-none focus:border-[var(--accent)] transition-all"
+              />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Study schedule */}
+      <section className="card p-6 mb-5">
+        <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-4">График учёбы</h2>
+        <div className="grid grid-cols-7 gap-2">
+          {WORK_DAYS.map(day => (
+            <div key={day} className="flex flex-col gap-1">
+              <label className="text-[10px] font-mono text-[var(--text3)] text-center uppercase">{DAY_LABELS[day]}</label>
+              <input
+                type="text"
+                placeholder="10-16"
+                value={form.study_schedule?.[day] || ''}
+                onChange={e => setScheduleTime('study', day, e.target.value)}
+                className="bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-xs text-center text-[var(--text)] outline-none focus:border-[var(--accent)] transition-all"
+              />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Health & Load */}
+      <section className="card p-6 mb-5">
+        <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-4">Здоровье и нагрузка</h2>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <Input label="Макс. часов в день" type="number" min="1" max="18" step="0.5" value={form.max_daily_hours} onChange={e => set('max_daily_hours', parseFloat(e.target.value))} />
+          <Input label="Время подъёма" type="time" value={form.wake_time} onChange={e => set('wake_time', e.target.value)} />
+          <Input label="Время сна" type="time" value={form.sleep_time} onChange={e => set('sleep_time', e.target.value)} />
+        </div>
+        <Textarea
+          label="Заметки о здоровье (для ИИ)"
+          placeholder="Например: боль в спине — нужны перерывы каждый час, не планировать физические задачи после 20:00..."
+          value={form.health_notes}
+          onChange={e => set('health_notes', e.target.value)}
+          rows={3}
+        />
+      </section>
+
+      <div className="flex justify-end mb-8">
+        <Btn variant="primary" onClick={save} disabled={saving}>
+          {saving ? 'Сохранение...' : 'Сохранить профиль'}
+        </Btn>
+      </div>
+
+      {/* AI Memory */}
+      <section className="card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider">Память ИИ</h2>
+          <span className="text-[10px] font-mono text-[var(--text3)] bg-[var(--surface2)] px-2 py-0.5 rounded">{memories.length} записей</span>
+        </div>
+        <p className="text-xs text-[var(--text3)] mb-4">Факты, которые ИИ узнал о вас из разговоров. Вы можете удалить любой.</p>
+        {memories.length === 0 ? (
+          <div className="text-center py-8 text-[var(--text3)] text-sm">
+            ИИ ещё не накопил воспоминаний. Пообщайтесь с ним!
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {memories.map(m => (
+              <div key={m.id} className="flex items-start gap-3 p-3 bg-[var(--surface2)] rounded-lg">
+                <span className="text-[10px] font-mono text-[var(--accent)] bg-[var(--accent)]/10 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5">{m.type}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] text-[var(--text3)] font-mono mb-0.5">{m.key}</div>
+                  <div className="text-xs text-[var(--text2)]">{m.value}</div>
+                </div>
+                <button
+                  onClick={() => removeMemory(m.id)}
+                  className="text-[var(--text3)] hover:text-red-400 cursor-pointer text-xs p-1 flex-shrink-0"
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/pages/Statistics.jsx">
+import React, { useEffect, useState } from 'react'
+import { getStatsOverview, getDailyStats, getHeatmap } from '../api'
+import { StatCard } from '../components/UI'
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, CartesianGrid, Legend
+} from 'recharts'
+import dayjs from 'dayjs'
+
+const CAT_COLORS = {
+  work: '#60a5fa',
+  study: '#a78bfa',
+  health: '#34d399',
+  personal: '#6c63ff',
+  finance: '#f59e0b',
+  social: '#f472b6',
+  unsorted: '#4a4a6a',
+}
+
+const CAT_LABELS = {
+  work: 'Работа', study: 'Учёба', health: 'Здоровье',
+  personal: 'Личное', finance: 'Финансы', social: 'Социальное', unsorted: 'Без сортировки'
+}
+
+const PRIO_COLORS = { critical: '#ef4444', high: '#f59e0b', medium: '#60a5fa', low: '#4a4a6a' }
+const PRIO_LABELS = { critical: 'Критичный', high: 'Высокий', medium: 'Средний', low: 'Низкий' }
+
+// GitHub-style heatmap
+function HeatmapCell({ date, data }) {
+  const val = data?.completed || 0
+  const allDone = data?.all_done
+  const intensity = val === 0 ? 0 : Math.min(val / 5, 1)
+  const bg = allDone
+    ? 'rgba(52,211,153,0.7)'
+    : val > 0
+    ? `rgba(108,99,255,${0.2 + intensity * 0.7})`
+    : 'rgba(255,255,255,0.04)'
+  const isToday = date === dayjs().format('YYYY-MM-DD')
+
+  return (
+    <div
+      title={`${date}: ${val} выполнено${allDone ? ' ✓ Все!' : ''}`}
+      style={{
+        width: 13, height: 13,
+        borderRadius: 2,
+        background: bg,
+        outline: isToday ? '1px solid var(--accent)' : 'none',
+        cursor: 'default',
+        transition: 'all 0.15s',
+      }}
+    />
+  )
+}
+
+function Heatmap({ heatmapData, year }) {
+  const start = dayjs(`${year}-01-01`)
+  const end = dayjs(`${year}-12-31`)
+  const weeks = []
+  let current = start.startOf('week')
+  while (current.isBefore(end) || current.isSame(end, 'week')) {
+    const week = []
+    for (let d = 0; d < 7; d++) {
+      const day = current.add(d, 'day')
+      if (day.year() === year) {
+        week.push(day.format('YYYY-MM-DD'))
+      } else {
+        week.push(null)
+      }
+    }
+    weeks.push(week)
+    current = current.add(1, 'week')
+  }
+
+  const MONTHS = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+
+  return (
+    <div>
+      <div className="flex gap-0.5 mb-1 ml-6">
+        {MONTHS.map((m, i) => (
+          <div key={i} style={{ flex: i < 11 ? '1' : 'none', minWidth: 0 }} className="text-[9px] font-mono text-[var(--text3)]">{m}</div>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <div className="flex flex-col gap-0.5 mr-1">
+          {['Пн','','Ср','','Пт','','Вс'].map((d, i) => (
+            <div key={i} className="text-[9px] font-mono text-[var(--text3)] h-[13px] flex items-center">{d}</div>
+          ))}
+        </div>
+        <div className="flex gap-0.5">
+          {weeks.map((week, wi) => (
+            <div key={wi} className="flex flex-col gap-0.5">
+              {week.map((day, di) => (
+                day ? <HeatmapCell key={di} date={day} data={heatmapData[day]} />
+                    : <div key={di} style={{ width: 13, height: 13 }} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 mt-2 ml-6">
+        <span className="text-[9px] text-[var(--text3)] font-mono">Меньше</span>
+        {[0, 0.2, 0.5, 0.8, 1].map(v => (
+          <div key={v} style={{ width: 11, height: 11, borderRadius: 2, background: `rgba(108,99,255,${v === 0 ? 0.04 : v * 0.9})` }} />
+        ))}
+        <span className="text-[9px] text-[var(--text3)] font-mono">Больше</span>
+        <div style={{ width: 11, height: 11, borderRadius: 2, background: 'rgba(52,211,153,0.7)' }} />
+        <span className="text-[9px] text-[var(--text3)] font-mono">100%</span>
+      </div>
+    </div>
+  )
+}
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-[var(--surface2)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs">
+      <div className="font-mono text-[var(--text3)] mb-1">{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.fill || p.stroke }} className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full" style={{ background: p.fill || p.stroke }} />
+          {p.name}: <strong>{p.value}</strong>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export default function Statistics() {
+  const [overview, setOverview] = useState(null)
+  const [daily, setDaily] = useState([])
+  const [heatmap, setHeatmap] = useState({})
+  const [loading, setLoading] = useState(true)
+  const year = dayjs().year()
+
+  useEffect(() => {
+    Promise.all([
+      getStatsOverview(),
+      getDailyStats(30),
+      getHeatmap(year),
+    ]).then(([ov, da, hm]) => {
+      setOverview(ov.data)
+      setDaily(da.data.map(d => ({
+        ...d,
+        date: dayjs(d.date).format('DD/MM'),
+      })))
+      setHeatmap(hm.data)
+    }).finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-[var(--text3)]">Загрузка аналитики...</div>
+    </div>
+  )
+
+  // Category pie data
+  const catData = Object.entries(overview?.by_category || {})
+    .filter(([_, v]) => v > 0)
+    .map(([k, v]) => ({ name: CAT_LABELS[k] || k, value: v, color: CAT_COLORS[k] || '#888' }))
+
+  // Priority bar data
+  const prioData = Object.entries(overview?.by_priority || {})
+    .map(([k, v]) => ({ name: PRIO_LABELS[k] || k, value: v, color: PRIO_COLORS[k] || '#888' }))
+
+  return (
+    <div className="overflow-y-auto h-full p-8">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
+        <p className="text-sm text-[var(--text3)] mt-1">Ваша продуктивность и прогресс</p>
+      </div>
+
+      {/* Overview cards */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <StatCard label="Всего задач" value={overview?.total_tasks || 0} icon="📋" />
+        <StatCard label="Выполнено" value={overview?.completed || 0} color="green" icon="✓" />
+        <StatCard label="Процент выполнения" value={`${overview?.completion_rate || 0}%`} color="gold" icon="📈" />
+        <StatCard label="Просрочено" value={overview?.overdue || 0} color="red" icon="⚠️" />
+        <StatCard label="В ожидании" value={overview?.pending || 0} color="blue" icon="⏳" />
+        <StatCard label="Стрик дней" value={`${overview?.streak_days || 0}д`} color="gold" icon="🔥"
+          sub={overview?.streak_days > 0 ? 'подряд выполнял все задачи' : 'Нет активного стрика'} />
+      </div>
+
+      {/* Activity heatmap */}
+      <div className="card p-6 mb-6 overflow-x-auto">
+        <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-5">Активность {year}</h2>
+        <Heatmap heatmapData={heatmap} year={year} />
+      </div>
+
+      {/* Daily chart */}
+      {daily.length > 0 && (
+        <div className="card p-6 mb-6">
+          <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-5">Задачи за 30 дней</h2>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={daily} margin={{ top: 5, right: 10, bottom: 5, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+              <XAxis dataKey="date" tick={{ fill: 'var(--text3)', fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'var(--text3)', fontSize: 10 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="completed" name="Выполнено" fill="#34d399" radius={[3,3,0,0]} />
+              <Bar dataKey="overdue" name="Просрочено" fill="#ef4444" radius={[3,3,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Load chart */}
+      {daily.length > 0 && (
+        <div className="card p-6 mb-6">
+          <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-5">Нагрузка (%)</h2>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={daily} margin={{ top: 5, right: 10, bottom: 5, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+              <XAxis dataKey="date" tick={{ fill: 'var(--text3)', fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: 'var(--text3)', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 150]} />
+              <Tooltip content={<CustomTooltip />} />
+              <Line dataKey="load_score" name="Нагрузка %" stroke="#6c63ff" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Category + Priority side by side */}
+      <div className="grid grid-cols-2 gap-6 mb-6">
+        {catData.length > 0 && (
+          <div className="card p-6">
+            <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-5">По категориям</h2>
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={catData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                  {catData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip content={<CustomTooltip />} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="grid grid-cols-2 gap-1 mt-2">
+              {catData.map((c, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-[11px] text-[var(--text3)]">
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.color }} />
+                  {c.name}: {c.value}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {prioData.length > 0 && (
+          <div className="card p-6">
+            <h2 className="text-sm font-semibold text-[var(--text2)] uppercase tracking-wider mb-5">По приоритету</h2>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={prioData} layout="vertical" margin={{ left: 10, right: 10 }}>
+                <XAxis type="number" tick={{ fill: 'var(--text3)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: 'var(--text2)', fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="value" name="Задач" radius={[0,4,4,0]}>
+                  {prioData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/tailwind.config.js">
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,jsx}'],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+      },
+      colors: {
+        ink: {
+          DEFAULT: '#0f0f14',
+          2: '#1e1e2a',
+          3: '#2d2d3f',
+          4: '#4a4a6a',
+          5: '#8888aa',
+        },
+        accent: {
+          DEFAULT: '#6c63ff',
+          soft: 'rgba(108,99,255,0.12)',
+        },
+        surface: {
+          DEFAULT: '#13131d',
+          2: '#1a1a28',
+          3: '#222233',
+        },
+      },
+    },
+  },
+  plugins: [],
+}
+</file>
+
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
+  },
+})
+</file>
+
+<file path="backend/main.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+import os
+
+# Загружаем .env ДО импорта всего остального
+load_dotenv()
+
+from database import create_tables
+from routers.tasks import router as tasks_router
+from routers.ai_agent import router as ai_router
+from routers.profile_stats import profile_router, stats_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    yield
+
+
+app = FastAPI(
+    title="TaskFlow API",
+    description="AI-powered personal task management",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(tasks_router)
+app.include_router(ai_router)
+app.include_router(profile_router)
+app.include_router(stats_router)
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "TaskFlow API"}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+@app.get("/debug/env")
+def debug_env():
+    """Проверка что ключи загружены"""
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    return {
+        "anthropic_key_set": bool(key),
+        "anthropic_key_prefix": key[:12] + "..." if key else "NOT SET",
+        "openai_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
+    }
+</file>
+
+<file path="backend/routers/ai_agent.py">
+from fastapi import APIRouter, Depends, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
+from database import get_db, ChatMessage
+from services.agent import process_message
+from services.transcribe import transcribe_audio
+import json
+
+router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+def msg_to_dict(m: ChatMessage) -> dict:
+    return {
+        "id": m.id,
+        "role": m.role,
+        "content": m.content,
+        "message_type": m.message_type,
+        "metadata": m.meta or {},
+        "created_at": m.created_at.isoformat(),
+    }
+
+
+@router.get("/history")
+def get_history(limit: int = 50, db: Session = Depends(get_db)):
+    msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.user_id == 1)
+        .order_by(ChatMessage.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+    return [msg_to_dict(m) for m in msgs]
+
+
+@router.post("/chat")
+async def chat(
+    message: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    # 1. СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
+    user_msg = ChatMessage(
+        user_id=1,
+        role="user",
+        content=message,
+        message_type="text",
+        meta={}
+    )
+    print(f"DEBUG: Saving message from user: {message}")
+    db.add(user_msg)
+    db.commit()
+    print("DEBUG: Commit successful!") # Сохраняем, чтобы получить ID или просто зафиксировать
+
+    # 2. ПОЛУЧАЕМ ОТВЕТ ОТ АГЕНТА
+    result = await process_message(message, db, user_id=1, msg_type="text")
+    
+    # 3. СОХРАНЯЕМ ОТВЕТ АССИСТЕНТА
+    # Берем текст ответа из поля 'message' (которое возвращает ваш агент)
+    ai_content = result.get("message") or "Задача обновлена"
+    
+    ai_msg = ChatMessage(
+        user_id=1,
+        role="assistant",
+        content=ai_content,
+        message_type="text",
+        meta=result # Сохраняем весь результат (tasks_created и т.д.) в метаданные
+    )
+    db.add(ai_msg)
+    db.commit()
+
+    return result
+
+@router.post("/voice")
+async def voice_chat(
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    audio_bytes = await audio.read()
+    transcript = await transcribe_audio(audio_bytes, audio.filename or "audio.webm")
+    result = await process_message(transcript, db, user_id=1, msg_type="voice")
+    result["transcript"] = transcript
+    return result
+
+
+@router.post("/upload-file")
+async def upload_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Accept text/pdf/docx file with task descriptions and process through agent."""
+    content = await file.read()
+    # For now: treat as plain text (can add PDF parsing later)
+    try:
+        text = content.decode("utf-8")
+    except Exception:
+        text = content.decode("latin-1", errors="replace")
+
+    prompt = f"I uploaded a file '{file.filename}' with the following content. Please extract all tasks from it:\n\n{text[:4000]}"
+    result = await process_message(prompt, db, user_id=1, msg_type="file")
+    result["filename"] = file.filename
+    return result
+
+
+@router.websocket("/ws")
+async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
+    """WebSocket for real-time chat."""
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            payload = json.loads(data)
+            message = payload.get("message", "")
+            msg_type = payload.get("type", "text")
+
+            result = await process_message(message, db, user_id=1, msg_type=msg_type)
+            await websocket.send_text(json.dumps(result))
+    except WebSocketDisconnect:
+        pass
+</file>
+
+<file path="backend/routers/tasks.py">
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
+from datetime import datetime, date, timedelta
+from typing import Optional, List
+from pydantic import BaseModel
+from database import get_db, Task, DailyStats
+from services.load_analyzer import update_daily_stats, generate_tips, get_overdue_tasks, calculate_day_load
+
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+# ─── SCHEMAS ──────────────────────────────────────────────────────────────────
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    category: str = "unsorted"
+    priority: str = "medium"
+    duration_minutes: Optional[int] = None
+    start_datetime: Optional[datetime] = None
+    end_datetime: Optional[datetime] = None
+    deadline: Optional[datetime] = None
+    subtasks: Optional[List[dict]] = []
+    is_recurring: bool = False
+    recurrence_rule: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    start_datetime: Optional[datetime] = None
+    end_datetime: Optional[datetime] = None
+    deadline: Optional[datetime] = None
+    subtasks: Optional[List[dict]] = None
+
+
+def task_to_dict(t: Task) -> dict:
+    return {
+        "id": t.id,
+        "title": t.title,
+        "description": t.description,
+        "category": t.category,
+        "priority": t.priority,
+        "status": t.status,
+        "duration_minutes": t.duration_minutes,
+        "start_datetime": t.start_datetime.isoformat() if t.start_datetime else None,
+        "end_datetime": t.end_datetime.isoformat() if t.end_datetime else None,
+        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "urgency_score": t.urgency_score,
+        "ai_generated": t.ai_generated,
+        "ai_notes": t.ai_notes,
+        "subtasks": t.subtasks or [],
+        "is_recurring": t.is_recurring,
+        "recurrence_rule": t.recurrence_rule,
+        "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+        "created_at": t.created_at.isoformat(),
+    }
+
+
+# ─── ENDPOINTS ────────────────────────────────────────────────────────────────
+
+@router.get("/")
+def get_tasks(
+    view: str = Query("day"),
+    date_str: Optional[str] = Query(None),
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns tasks for calendar view.
+    Includes:
+    - Tasks whose start_datetime falls in the period
+    - Tasks whose deadline falls in the period (overdue shown on deadline day)
+    - Tasks with NO date at all (undated) — separately in 'undated' key
+    - Overdue tasks (deadline < today, not completed) — included in current period
+    """
+    user_id = 1
+    target_date = date.fromisoformat(date_str) if date_str else date.today()
+    now = datetime.now()
+    today_start = datetime.combine(date.today(), datetime.min.time())
+
+    # Build date range for the view
+    if view == "day":
+        start = datetime.combine(target_date, datetime.min.time())
+        end = start + timedelta(days=1)
+    elif view == "week":
+        monday = target_date - timedelta(days=target_date.weekday())
+        start = datetime.combine(monday, datetime.min.time())
+        end = start + timedelta(days=7)
+    elif view == "month":
+        start = datetime.combine(date(target_date.year, target_date.month, 1), datetime.min.time())
+        if target_date.month == 12:
+            end = datetime.combine(date(target_date.year + 1, 1, 1), datetime.min.time())
+        else:
+            end = datetime.combine(date(target_date.year, target_date.month + 1, 1), datetime.min.time())
+    elif view == "year":
+        start = datetime.combine(date(target_date.year, 1, 1), datetime.min.time())
+        end = datetime.combine(date(target_date.year + 1, 1, 1), datetime.min.time())
+    else:
+        start = datetime.combine(target_date, datetime.min.time())
+        end = start + timedelta(days=1)
+
+    base_query = db.query(Task).filter(Task.user_id == user_id)
+    if category:
+        base_query = base_query.filter(Task.category == category)
+    if status:
+        base_query = base_query.filter(Task.status == status)
+
+    all_tasks = base_query.all()
+
+    # 1. Tasks that START within the period
+    in_period = [
+        t for t in all_tasks
+        if t.start_datetime and start <= t.start_datetime < end
+    ]
+
+    # 2. Tasks with deadline in period but no start_datetime
+    deadline_only = [
+        t for t in all_tasks
+        if t.deadline
+        and not t.start_datetime
+        and start <= t.deadline < end
+    ]
+
+    # 3. Overdue: deadline < today, not completed, not already in period
+    # These are shown in current view so user sees them
+    in_period_ids = {t.id for t in in_period} | {t.id for t in deadline_only}
+    overdue_floating = [
+        t for t in all_tasks
+        if t.deadline
+        and t.deadline < today_start
+        and t.status not in ("completed", "postponed")
+        and t.id not in in_period_ids
+    ]
+
+    # Auto-mark overdue status in DB
+    for t in overdue_floating:
+        if t.status == "pending":
+            t.status = "overdue"
+    if overdue_floating:
+        db.commit()
+
+    # Combine scheduled tasks
+    scheduled_ids = in_period_ids | {t.id for t in overdue_floating}
+    scheduled = in_period + deadline_only + overdue_floating
+
+    # 4. Undated tasks: no start_datetime, no deadline, not completed
+    undated = [
+        t for t in all_tasks
+        if not t.start_datetime
+        and not t.deadline
+        and t.status not in ("completed",)
+        and t.id not in scheduled_ids
+    ]
+
+    scheduled.sort(key=lambda t: (
+        t.start_datetime or t.deadline or datetime.max
+    ))
+
+    return {
+        "tasks": [task_to_dict(t) for t in scheduled],
+        "undated": [task_to_dict(t) for t in undated],
+        "view": view,
+        "date": str(target_date),
+    }
+
+
+@router.get("/undated")
+def get_undated(db: Session = Depends(get_db)):
+    """Tasks with no date and no deadline."""
+    tasks = db.query(Task).filter(
+        Task.user_id == 1,
+        Task.start_datetime.is_(None),
+        Task.deadline.is_(None),
+        Task.status != "completed",
+    ).order_by(Task.created_at.desc()).all()
+    return [task_to_dict(t) for t in tasks]
+
+
+@router.get("/unsorted")
+def get_unsorted(db: Session = Depends(get_db)):
+    tasks = db.query(Task).filter(
+        Task.user_id == 1,
+        Task.category == "unsorted",
+        Task.status != "completed",
+    ).all()
+    return [task_to_dict(t) for t in tasks]
+
+
+@router.get("/overdue")
+def get_overdue(db: Session = Depends(get_db)):
+    tasks = get_overdue_tasks(db, user_id=1)
+    return [task_to_dict(t) for t in tasks]
+
+
+@router.get("/tips")
+def get_tips(db: Session = Depends(get_db)):
+    tips = generate_tips(db, user_id=1)
+    today = date.today()
+    load = calculate_day_load(db, today, user_id=1)
+    return {"tips": tips, "load": load}
+
+
+@router.get("/load/{date_str}")
+def get_load(date_str: str, db: Session = Depends(get_db)):
+    target = date.fromisoformat(date_str)
+    return calculate_day_load(db, target, user_id=1)
+
+
+@router.post("/")
+def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
+    task = Task(
+        user_id=1,
+        title=task_in.title,
+        description=task_in.description,
+        category=task_in.category,
+        priority=task_in.priority,
+        duration_minutes=task_in.duration_minutes,
+        start_datetime=task_in.start_datetime,
+        end_datetime=task_in.end_datetime,
+        deadline=task_in.deadline,
+        subtasks=[
+            {"title": s["title"] if isinstance(s, dict) else s, "done": False}
+            for s in (task_in.subtasks or [])
+        ],
+        is_recurring=task_in.is_recurring,
+        recurrence_rule=task_in.recurrence_rule,
+        ai_generated=False,
+    )
+    if task.start_datetime and task_in.duration_minutes and not task.end_datetime:
+        task.end_datetime = task.start_datetime + timedelta(minutes=task_in.duration_minutes)
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    update_daily_stats(db, user_id=1)
+    return task_to_dict(task)
+
+
+@router.get("/{task_id}")
+def get_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task_to_dict(task)
+
+
+@router.patch("/{task_id}")
+def update_task(task_id: int, updates: TaskUpdate, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    for field, value in updates.dict(exclude_none=True).items():
+        setattr(task, field, value)
+    # If status set to pending/active, clear completed_at
+    if updates.status and updates.status in ("pending", "in_progress"):
+        task.completed_at = None
+    task.updated_at = datetime.now()
+    db.commit()
+    db.refresh(task)
+    update_daily_stats(db, user_id=1)
+    return task_to_dict(task)
+
+
+@router.post("/{task_id}/complete")
+def complete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    task.status = "completed"
+    task.completed_at = datetime.now()
+    task.updated_at = datetime.now()
+    db.commit()
+    update_daily_stats(db, user_id=1)
+    return {"ok": True, "task_id": task_id}
+
+
+@router.post("/{task_id}/postpone")
+def postpone_task(task_id: int, new_date: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    new_dt = datetime.fromisoformat(new_date)
+    if task.start_datetime:
+        duration = task.duration_minutes or 60
+        task.start_datetime = new_dt
+        task.end_datetime = new_dt + timedelta(minutes=duration)
+    if task.deadline:
+        task.deadline = new_dt
+    task.status = "postponed"
+    task.updated_at = datetime.now()
+    db.commit()
+    update_daily_stats(db, user_id=1)
+    return task_to_dict(task)
+
+
+@router.patch("/{task_id}/subtasks/{sub_idx}")
+def toggle_subtask(task_id: int, sub_idx: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    subs = list(task.subtasks or [])
+    if sub_idx >= len(subs):
+        raise HTTPException(400, "Subtask index out of range")
+    subs[sub_idx]["done"] = not subs[sub_idx]["done"]
+    task.subtasks = subs
+    task.updated_at = datetime.now()
+    db.commit()
+    return task_to_dict(task)
+
+
+@router.delete("/{task_id}")
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+    db.delete(task)
+    db.commit()
+    update_daily_stats(db, user_id=1)
+    return {"ok": True}
+</file>
+
+<file path="backend/services/transcribe.py">
+from faster_whisper import WhisperModel
+import os
+
+# Загружаем модель (base — оптимально по скорости и качеству)
+stt_model = WhisperModel("base", device="cpu", compute_type="int8")
+
+async def transcribe_audio(audio_bytes: bytes, filename: str):
+    # Сохраняем временный файл, чтобы whisper его прочитал
+    temp_path = f"temp_{filename}"
+    with open(temp_path, "wb") as f:
+        f.write(audio_bytes)
+    
+    # Транскрибируем
+    segments, _ = stt_model.transcribe(temp_path, beam_size=5)
+    text = "".join([segment.text for segment in segments])
+    
+    # Удаляем временный файл
+    os.remove(temp_path)
+    return text.strip()
+</file>
+
+<file path="frontend/src/api.js">
+import axios from 'axios'
+
+const api = axios.create({ baseURL: '/api' })
+
+// Tasks
+export const getTasks = (view, date, category, status) =>
+  api.get('/tasks/', { params: { view, date_str: date, category, status } })
+
+export const getUndated = () => api.get('/tasks/undated')
+export const getUnsorted = () => api.get('/tasks/unsorted')
+export const getOverdue = () => api.get('/tasks/overdue')
+export const getTips = () => api.get('/tasks/tips')
+export const getLoad = (date) => api.get(`/tasks/load/${date}`)
+
+export const createTask = (data) => api.post('/tasks/', data)
+export const updateTask = (id, data) => api.patch(`/tasks/${id}`, data)
+export const completeTask = (id) => api.post(`/tasks/${id}/complete`)
+export const postponeTask = (id, newDate) =>
+  api.post(`/tasks/${id}/postpone`, null, { params: { new_date: newDate } })
+export const toggleSubtask = (id, idx) => api.patch(`/tasks/${id}/subtasks/${idx}`)
+export const deleteTask = (id) => api.delete(`/tasks/${id}`)
+
+// AI
+export const getChatHistory = () => api.get('/ai/history')
+
+export const sendChat = async (message) => {
+  const form = new FormData()
+  form.append('message', message)
+  const res = await api.post('/ai/chat', form)
+  return res.data
+}
+
+export const sendVoice = async (audioBlob) => {
+  const form = new FormData()
+  form.append('audio', audioBlob, 'audio.webm')
+  const res = await api.post('/ai/voice', form)
+  return res.data
+}
+
+export const uploadFile = async (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await api.post('/ai/upload-file', form)
+  return res.data
+}
+
+// Profile
+export const getProfile = () => api.get('/profile/')
+export const updateProfile = (data) => api.patch('/profile/', data)
+export const getMemories = () => api.get('/profile/memories')
+export const deleteMemory = (id) => api.delete(`/profile/memories/${id}`)
+
+// Stats
+export const getStatsOverview = () => api.get('/stats/overview')
+export const getDailyStats = (days) => api.get('/stats/daily', { params: { days } })
+export const getHeatmap = (year) => api.get('/stats/heatmap', { params: { year } })
+</file>
+
+<file path="frontend/src/components/Calendar.jsx">
+import React, { useEffect, useCallback, useState } from 'react'
+import dayjs from 'dayjs'
+import 'dayjs/locale/ru'
+import { useStore } from '../store'
+import { getTasks, getTips, completeTask, deleteTask, updateTask } from '../api'
+import toast from 'react-hot-toast'
+
+dayjs.locale('ru')
+
+const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
+const sortTasks = (tasks) =>
+  [...tasks].sort((a, b) => (PRIO_ORDER[a.priority] ?? 2) - (PRIO_ORDER[b.priority] ?? 2))
+
+const CAT_MAP = {
+  work:     { label: 'Работа',        color: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },
+  study:    { label: 'Учёба',          color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  health:   { label: 'Здоровье',       color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
+  personal: { label: 'Личное',         color: '#6c63ff', bg: 'rgba(108,99,255,0.12)' },
+  finance:  { label: 'Финансы',        color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  social:   { label: 'Социальное',     color: '#f472b6', bg: 'rgba(244,114,182,0.12)' },
+  unsorted: { label: 'Без сортировки', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' },
+}
+
+const PRIO_MAP = {
+  critical: { label: 'Критично', color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   dot: 'bg-red-500'   },
+  high:     { label: 'Высокий',  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  dot: 'bg-amber-400' },
+  medium:   { label: 'Средний',  color: '#60a5fa', bg: 'rgba(96,165,250,0.12)',  dot: 'bg-blue-400'  },
+  low:      { label: 'Низкий',   color: '#6b7280', bg: 'rgba(107,114,128,0.12)', dot: 'bg-gray-500'  },
+}
+
+// ─── TASK DETAIL MODAL ───────────────────────────────────────────────────────
+function TaskModal({ task, onClose, onComplete, onDelete, onUpdate }) {
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState({
+    title: task.title,
+    description: task.description || '',
+    category: task.category,
+    priority: task.priority,
+    duration_minutes: task.duration_minutes || '',
+    start_datetime: task.start_datetime ? task.start_datetime.slice(0, 16) : '',
+    deadline: task.deadline ? task.deadline.slice(0, 16) : '',
+  })
+  const [saving, setSaving] = useState(false)
+  const isDone = task.status === 'completed'
+  const isOverdue = !isDone && task.deadline && new Date(task.deadline) < new Date()
+  const cat = CAT_MAP[task.category] || CAT_MAP.unsorted
+  const prio = PRIO_MAP[task.priority] || PRIO_MAP.medium
+  const doneSubs = (task.subtasks || []).filter(s => s.done).length
+  const totalSubs = (task.subtasks || []).length
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await onUpdate(task.id, {
+        ...form,
+        duration_minutes: form.duration_minutes ? parseInt(form.duration_minutes) : null,
+        start_datetime: form.start_datetime || null,
+        deadline: form.deadline || null,
+      })
+      setEditing(false)
+      toast.success('Задача обновлена')
+    } catch { toast.error('Ошибка сохранения') }
+    finally { setSaving(false) }
+  }
+
+  const inp = 'w-full bg-[var(--surface3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] transition-all'
+  const lbl = 'text-[10px] uppercase tracking-widest text-[var(--text3)] font-mono mb-1 block'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-lg bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl slide-up max-h-[90vh] overflow-y-auto">
+
+        {/* Header */}
+        <div className="flex items-start justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--surface)] z-10">
+          <div className="flex-1 min-w-0 pr-4">
+            {editing
+              ? <input className={inp + ' text-base font-semibold'} value={form.title} onChange={e => setForm(f => ({...f, title: e.target.value}))} autoFocus />
+              : <h2 className={`text-base font-semibold leading-snug ${isDone ? 'line-through text-[var(--text3)]' : ''}`}>{task.title}</h2>
+            }
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {!editing && (
+              <button onClick={() => setEditing(true)}
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] text-[var(--text3)] hover:text-[var(--text)] hover:bg-[var(--surface2)] cursor-pointer transition-all">
+                ✎ Изменить
+              </button>
+            )}
+            <button onClick={onClose} className="text-[var(--text3)] hover:text-[var(--text)] cursor-pointer text-lg leading-none">✕</button>
+          </div>
+        </div>
+
+        <div className="p-5 flex flex-col gap-5">
+
+          {/* Badges row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {editing ? (
+              <>
+                <select className={inp + ' flex-1'} value={form.priority} onChange={e => setForm(f => ({...f, priority: e.target.value}))}>
+                  <option value="critical">🔴 Критично</option>
+                  <option value="high">🟡 Высокий</option>
+                  <option value="medium">🔵 Средний</option>
+                  <option value="low">⚪ Низкий</option>
+                </select>
+                <select className={inp + ' flex-1'} value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+                  <option value="work">💼 Работа</option>
+                  <option value="study">📚 Учёба</option>
+                  <option value="health">🏃 Здоровье</option>
+                  <option value="personal">🙂 Личное</option>
+                  <option value="finance">💰 Финансы</option>
+                  <option value="social">👥 Социальное</option>
+                  <option value="unsorted">📋 Без сортировки</option>
+                </select>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border"
+                  style={{ color: prio.color, background: prio.bg, borderColor: prio.color + '40' }}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${prio.dot}`} /> {prio.label}
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
+                  style={{ color: cat.color, background: cat.bg }}>
+                  {cat.label}
+                </span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${
+                  isDone ? 'bg-emerald-500/15 text-emerald-400' :
+                  isOverdue ? 'bg-red-500/15 text-red-400' :
+                  task.status === 'overdue' ? 'bg-red-500/15 text-red-400' :
+                  'bg-[var(--surface3)] text-[var(--text3)]'
+                }`}>
+                  {isDone ? '✓ Выполнено' : (isOverdue || task.status === 'overdue') ? '⚠ Просрочено' : '● Активно'}
+                </span>
+                {task.ai_generated && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] bg-[var(--accent)]/10 text-[var(--accent)]">✦ ИИ</span>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className={lbl}>Описание</label>
+            {editing
+              ? <textarea className={inp} rows={3} value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))} placeholder="Детали задачи..." />
+              : <p className="text-sm text-[var(--text2)] leading-relaxed">{task.description || <span className="text-[var(--text3)] italic">Нет описания</span>}</p>
+            }
+          </div>
+
+          {/* Time grid */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Длительность', key: 'duration_minutes', type: 'number', placeholder: 'мин',
+                display: task.duration_minutes
+                  ? (Math.floor(task.duration_minutes/60) > 0 ? Math.floor(task.duration_minutes/60)+'ч ' : '') + (task.duration_minutes%60 > 0 ? task.duration_minutes%60+'м' : '')
+                  : '—' },
+              { label: 'Начало', key: 'start_datetime', type: 'datetime-local',
+                display: task.start_datetime ? dayjs(task.start_datetime).format('DD.MM HH:mm') : '—' },
+              { label: 'Дедлайн', key: 'deadline', type: 'datetime-local',
+                display: task.deadline ? dayjs(task.deadline).format('DD.MM HH:mm') : '—',
+                red: isOverdue },
+            ].map(f => (
+              <div key={f.key}>
+                <label className={lbl}>{f.label}</label>
+                {editing
+                  ? <input className={inp} type={f.type} placeholder={f.placeholder}
+                      value={form[f.key]} onChange={e => setForm(p => ({...p, [f.key]: e.target.value}))} />
+                  : <div className={`text-sm ${f.red ? 'text-red-400 font-medium' : 'text-[var(--text2)]'}`}>{f.display}</div>
+                }
+              </div>
+            ))}
+          </div>
+
+          {/* AI notes */}
+          {task.ai_notes && (
+            <div className="bg-[var(--accent)]/8 border border-[var(--accent)]/20 rounded-xl p-3">
+              <div className="text-[10px] font-mono text-[var(--accent)] mb-1 uppercase tracking-wider">✦ ИИ-анализ</div>
+              <p className="text-xs text-[var(--text2)] leading-relaxed">{task.ai_notes}</p>
+            </div>
+          )}
+
+          {/* Subtasks */}
+          {totalSubs > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className={lbl + ' mb-0'}>Подзадачи</label>
+                <span className="text-[10px] font-mono text-[var(--text3)]">{doneSubs}/{totalSubs}</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {(task.subtasks || []).map((s, i) => (
+                  <div key={i} className={`flex items-center gap-2.5 p-2 rounded-lg bg-[var(--surface2)] text-sm ${s.done ? 'opacity-50' : ''}`}>
+                    <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${s.done ? 'bg-emerald-500/20 border-emerald-400/40' : 'border-[var(--border)]'}`}>
+                      {s.done && <span className="text-emerald-400 text-[9px]">✓</span>}
+                    </div>
+                    <span className={s.done ? 'line-through text-[var(--text3)]' : 'text-[var(--text2)]'}>{s.title || s.t}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 h-1 bg-[var(--surface3)] rounded-full overflow-hidden">
+                <div className="h-full bg-[var(--accent)] rounded-full transition-all"
+                  style={{ width: `${totalSubs ? (doneSubs/totalSubs)*100 : 0}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          {editing ? (
+            <div className="flex gap-2 pt-1 border-t border-[var(--border)]">
+              <button onClick={() => setEditing(false)}
+                className="flex-1 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text3)] hover:bg-[var(--surface2)] cursor-pointer transition-all">
+                Отмена
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:bg-[#7c75ff] disabled:opacity-50 cursor-pointer transition-all font-medium">
+                {saving ? 'Сохранение...' : 'Сохранить'}
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2 pt-1 border-t border-[var(--border)]">
+              <button onClick={() => onComplete(task.id, isDone)}
+                className={`flex-1 py-2 text-sm rounded-lg font-medium cursor-pointer transition-all ${
+                  isDone
+                    ? 'bg-[var(--surface2)] border border-[var(--border)] text-[var(--text3)] hover:text-amber-400 hover:border-amber-400/30'
+                    : 'bg-emerald-500/15 border border-emerald-400/30 text-emerald-400 hover:bg-emerald-500/25'
+                }`}>
+                {isDone ? '↩ Возобновить' : '✓ Выполнено'}
+              </button>
+              <button onClick={() => { onDelete(task.id); onClose() }}
+                className="px-4 py-2 text-sm rounded-lg border border-red-400/20 text-red-400 hover:bg-red-400/10 cursor-pointer transition-all">
+                Удалить
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── UNDATED PANEL ────────────────────────────────────────────────────────────
+function UndatedPanel({ tasks, onOpen }) {
+  const [collapsed, setCollapsed] = useState(false)
+  if (!tasks || tasks.length === 0) return null
+
+  return (
+    <div className="border-t border-[var(--border)] bg-[var(--surface)] flex-shrink-0">
+      {/* Header */}
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface2)] transition-all cursor-pointer"
+      >
+        <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text3)]">
+          Без даты
+        </span>
+        <div className="flex items-center gap-1.5">
+          {/* Mini priority dots preview */}
+          {tasks.slice(0, 5).map((t, i) => {
+            const prio = PRIO_MAP[t.priority] || PRIO_MAP.medium
+            return <div key={i} className={`w-1.5 h-1.5 rounded-full ${prio.dot}`} />
+          })}
+          {tasks.length > 5 && <span className="text-[10px] text-[var(--text3)] font-mono">+{tasks.length - 5}</span>}
+        </div>
+        <span className="text-[10px] font-mono text-[var(--text3)] ml-auto">{tasks.length} задач</span>
+        <span className="text-[10px] text-[var(--text3)] ml-1">{collapsed ? '▲' : '▼'}</span>
+      </button>
+
+      {/* Task chips */}
+      {!collapsed && (
+        <div className="px-4 pb-3 flex flex-wrap gap-2">
+          {sortTasks(tasks).map(t => {
+            const prio = PRIO_MAP[t.priority] || PRIO_MAP.medium
+            const cat = CAT_MAP[t.category] || CAT_MAP.unsorted
+            return (
+              <button
+                key={t.id}
+                onClick={() => onOpen(t)}
+                className="group flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-all hover:scale-[1.02] hover:shadow-lg"
+                style={{
+                  background: prio.bg,
+                  borderColor: prio.color + '30',
+                }}
+              >
+                {/* Prio dot */}
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${prio.dot}`} />
+                {/* Title */}
+                <span className="text-xs font-medium max-w-[140px] truncate" style={{ color: prio.color }}>
+                  {t.title}
+                </span>
+                {/* Cat label */}
+                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+                  style={{ color: cat.color, background: cat.bg }}>
+                  {cat.label}
+                </span>
+                {/* AI badge */}
+                {t.ai_generated && (
+                  <span className="text-[9px] text-[var(--accent)] flex-shrink-0">✦</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── TASK ROW ─────────────────────────────────────────────────────────────────
+function TaskRow({ task, onOpen }) {
+  const isDone = task.status === 'completed'
+  const isOverdue = !isDone && (task.status === 'overdue' || (task.deadline && new Date(task.deadline) < new Date()))
+  const prio = PRIO_MAP[task.priority] || PRIO_MAP.medium
+  const cat = CAT_MAP[task.category] || CAT_MAP.unsorted
+
+  return (
+    <div onClick={() => onOpen(task)}
+      className={`group flex items-start gap-2.5 p-2.5 rounded-xl cursor-pointer hover:bg-[var(--surface2)] transition-all fade-in border border-transparent hover:border-[var(--border)] ${isDone ? 'opacity-45' : ''}`}>
+      <div className="w-0.5 self-stretch rounded-full flex-shrink-0 mt-0.5"
+        style={{ background: isDone ? 'var(--text3)' : isOverdue ? '#ef4444' : prio.color }} />
+      <div className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center ${
+        isDone ? 'bg-emerald-500/20 border-emerald-400/40' : 'border-[var(--border)]'}`}>
+        {isDone && <span className="text-emerald-400 text-[9px]">✓</span>}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-medium leading-snug ${isDone ? 'line-through text-[var(--text3)]' : isOverdue ? 'text-red-400' : 'text-[var(--text)]'}`}>
+          {task.title}
+        </div>
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono" style={{ color: cat.color, background: cat.bg }}>{cat.label}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono border" style={{ color: prio.color, background: prio.bg, borderColor: prio.color + '30' }}>{prio.label}</span>
+          {task.duration_minutes && (
+            <span className="text-[10px] text-[var(--text3)] font-mono">
+              ⏱ {task.duration_minutes < 60 ? task.duration_minutes+'м' : Math.floor(task.duration_minutes/60)+'ч'+(task.duration_minutes%60 ? ' '+task.duration_minutes%60+'м' : '')}
+            </span>
+          )}
+          {task.start_datetime && <span className="text-[10px] text-[var(--text3)] font-mono">🕐 {dayjs(task.start_datetime).format('HH:mm')}</span>}
+          {isOverdue && <span className="text-[10px] text-red-400 font-mono font-semibold">ПРОСРОЧЕНО</span>}
+          {task.subtasks?.length > 0 && (
+            <span className="text-[10px] text-[var(--text3)] font-mono">☑ {task.subtasks.filter(s=>s.done).length}/{task.subtasks.length}</span>
+          )}
+        </div>
+      </div>
+      <span className="text-[var(--text3)] opacity-0 group-hover:opacity-100 transition-opacity text-xs mt-0.5 flex-shrink-0">›</span>
+    </div>
+  )
+}
+
+// ─── DAY VIEW ─────────────────────────────────────────────────────────────────
+function DayView({ tasks, onOpen }) {
+  if (!tasks.length) return (
+    <div className="flex flex-col items-center justify-center h-48 text-[var(--text3)]">
+      <div className="text-3xl mb-3 opacity-30">◻</div>
+      <div className="text-sm">Нет задач на этот день</div>
+    </div>
+  )
+  const active = sortTasks(tasks.filter(t => t.status !== 'completed'))
+  const done = tasks.filter(t => t.status === 'completed')
+  return (
+    <div className="flex flex-col gap-1 p-2">
+      {active.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} />)}
+      {done.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 my-2 px-2">
+            <div className="flex-1 h-px bg-[var(--border)]" />
+            <span className="text-[10px] font-mono text-[var(--text3)] uppercase tracking-wider">Выполнено · {done.length}</span>
+            <div className="flex-1 h-px bg-[var(--border)]" />
+          </div>
+          {done.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} />)}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── WEEK VIEW ────────────────────────────────────────────────────────────────
+function WeekView({ tasks, currentDate, onOpen }) {
+  const monday = dayjs(currentDate).startOf('week')
+  const days = Array.from({ length: 7 }, (_, i) => monday.add(i, 'day'))
+  const today = dayjs().format('YYYY-MM-DD')
+
+  return (
+    <div className="grid grid-cols-7 gap-2 h-full">
+      {days.map(day => {
+        const ds = day.format('YYYY-MM-DD')
+        const dayTasks = tasks.filter(t => {
+          if (t.start_datetime && dayjs(t.start_datetime).format('YYYY-MM-DD') === ds) return true
+          if (!t.start_datetime && t.deadline && dayjs(t.deadline).format('YYYY-MM-DD') === ds) return true
+          // Overdue tasks — show on today
+          if (t.status === 'overdue' && ds === today) return true
+          return false
+        })
+        const active = sortTasks(dayTasks.filter(t => t.status !== 'completed'))
+        const done = dayTasks.filter(t => t.status === 'completed')
+        const isToday = ds === today
+
+        return (
+          <div key={ds} className={`rounded-xl border p-2 flex flex-col gap-1 min-h-[200px] ${isToday ? 'border-[var(--accent)]/40 bg-[var(--accent)]/5' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
+            <div className={`text-center mb-1 pb-1.5 border-b ${isToday ? 'border-[var(--accent)]/20' : 'border-[var(--border)]'}`}>
+              <div className={`text-[9px] font-mono uppercase tracking-wider ${isToday ? 'text-[var(--accent)]' : 'text-[var(--text3)]'}`}>{day.format('dd')}</div>
+              <div className={`text-xl font-bold leading-tight ${isToday ? 'text-[var(--accent)]' : 'text-[var(--text)]'}`}>{day.format('D')}</div>
+              {dayTasks.length > 0 && (
+                <div className="text-[9px] font-mono text-[var(--text3)] mt-0.5">
+                  {active.length > 0 ? active.length+' акт.' : ''}{done.length > 0 ? (active.length > 0 ? ' · ' : '')+done.length+' ✓' : ''}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto flex-1">
+              {active.map(t => {
+                const prio = PRIO_MAP[t.priority] || PRIO_MAP.medium
+                const cat = CAT_MAP[t.category] || CAT_MAP.unsorted
+                const isOv = t.status === 'overdue' || (!t.start_datetime && t.deadline && new Date(t.deadline) < new Date())
+                return (
+                  <div key={t.id} onClick={() => onOpen(t)}
+                    className="text-[11px] px-2 py-1.5 rounded-lg cursor-pointer transition-all hover:scale-[1.02] border"
+                    style={{ background: isOv ? 'rgba(239,68,68,0.1)' : prio.bg, borderColor: (isOv ? '#ef4444' : prio.color)+'30', color: isOv ? '#ef4444' : prio.color }}>
+                    <div className="font-medium truncate">{t.title}</div>
+                    <div className="text-[9px] opacity-70 mt-0.5">{cat.label}{t.duration_minutes ? ` · ${t.duration_minutes}м` : ''}{isOv ? ' · ⚠ просрочено' : ''}</div>
+                  </div>
+                )
+              })}
+              {done.map(t => (
+                <div key={t.id} onClick={() => onOpen(t)}
+                  className="text-[10px] px-2 py-1 rounded cursor-pointer opacity-35 bg-[var(--surface3)] line-through text-[var(--text3)] truncate">
+                  {t.title}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── MONTH VIEW ───────────────────────────────────────────────────────────────
+function MonthView({ tasks, currentDate, onOpen }) {
+  const startOfMonth = dayjs(currentDate).startOf('month')
+  const daysInMonth = startOfMonth.daysInMonth()
+  const startDow = (startOfMonth.day() + 6) % 7
+  const cells = Array.from({ length: startDow }, () => null)
+    .concat(Array.from({ length: daysInMonth }, (_, i) => startOfMonth.add(i, 'day')))
+  const today = dayjs().format('YYYY-MM-DD')
+  const DAYS = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС']
+
+  return (
+    <div>
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {DAYS.map(d => <div key={d} className="text-center text-[10px] font-mono text-[var(--text3)] py-1">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />
+          const ds = day.format('YYYY-MM-DD')
+          const isToday = ds === today
+          const dayTasks = tasks.filter(t => {
+            const ts = t.start_datetime ? dayjs(t.start_datetime).format('YYYY-MM-DD') : null
+            const dl = t.deadline ? dayjs(t.deadline).format('YYYY-MM-DD') : null
+            if (t.status === 'overdue' && isToday) return true
+            return ts === ds || dl === ds
+          })
+          const active = dayTasks.filter(t => t.status !== 'completed')
+          const allDone = dayTasks.length > 0 && active.length === 0
+          const hasOverdue = active.some(t => t.status === 'overdue' || (t.deadline && new Date(t.deadline) < new Date()))
+
+          return (
+            <div key={ds} className={`rounded-lg p-1.5 min-h-[80px] border transition-all ${
+              isToday ? 'border-[var(--accent)]/50 bg-[var(--accent)]/5' :
+              allDone ? 'border-emerald-400/20 bg-emerald-400/5' :
+              hasOverdue ? 'border-red-400/30 bg-red-400/5' :
+              'border-[var(--border)] bg-[var(--surface)]'
+            }`}>
+              <div className={`text-xs font-bold mb-1 ${isToday ? 'text-[var(--accent)]' : 'text-[var(--text3)]'}`}>{day.format('D')}</div>
+              <div className="flex flex-col gap-0.5">
+                {dayTasks.slice(0, 3).map(t => {
+                  const prio = PRIO_MAP[t.priority] || PRIO_MAP.medium
+                  const isDone = t.status === 'completed'
+                  const isOv = t.status === 'overdue'
+                  return (
+                    <div key={t.id} onClick={() => onOpen(t)}
+                      className={`text-[9px] px-1 py-0.5 rounded truncate cursor-pointer hover:opacity-80 ${isDone ? 'line-through opacity-30 bg-[var(--surface3)] text-[var(--text3)]' : ''}`}
+                      style={!isDone ? { background: isOv ? 'rgba(239,68,68,0.15)' : prio.bg, color: isOv ? '#ef4444' : prio.color } : {}}>
+                      {t.title}
+                    </div>
+                  )
+                })}
+                {dayTasks.length > 3 && <div className="text-[9px] text-[var(--text3)] font-mono px-1">+{dayTasks.length-3}</div>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── YEAR VIEW ────────────────────────────────────────────────────────────────
+function YearView({ tasks, currentDate }) {
+  const year = dayjs(currentDate).year()
+  const months = Array.from({ length: 12 }, (_, i) => dayjs(`${year}-${String(i+1).padStart(2,'0')}-01`))
+  const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+  const today = dayjs().format('YYYY-MM-DD')
+
+  return (
+    <div className="grid grid-cols-4 gap-4">
+      {months.map((m, mi) => {
+        const daysInMonth = m.daysInMonth()
+        const startDow = (m.day() + 6) % 7
+        const cells = Array(startDow).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i+1))
+        return (
+          <div key={mi} className="card p-3">
+            <div className="text-xs font-medium text-[var(--text2)] mb-2">{MONTH_NAMES[mi]}</div>
+            <div className="grid grid-cols-7 gap-0.5">
+              {cells.map((d, i) => {
+                if (!d) return <div key={i} className="w-4 h-4" />
+                const ds = `${year}-${String(mi+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+                const dayTasks = tasks.filter(t => t.start_datetime && dayjs(t.start_datetime).format('YYYY-MM-DD') === ds)
+                const allDone = dayTasks.length > 0 && dayTasks.every(t => t.status === 'completed')
+                const hasCritical = dayTasks.some(t => t.priority === 'critical' && t.status !== 'completed')
+                const hasOverdue = dayTasks.some(t => t.status === 'overdue')
+                const isToday = ds === today
+                return (
+                  <div key={i} title={dayTasks.length > 0 ? `${d}: ${dayTasks.length} задач` : String(d)}
+                    className={`w-4 h-4 rounded-sm transition-all ${
+                      isToday ? 'ring-1 ring-[var(--accent)]' :
+                      allDone ? 'bg-emerald-500/50' :
+                      hasOverdue ? 'bg-red-500/60' :
+                      hasCritical ? 'bg-red-400/40' :
+                      dayTasks.length > 0 ? 'bg-[var(--accent)]/35' :
+                      'bg-[var(--surface3)]'
+                    }`} />
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── MAIN CALENDAR ────────────────────────────────────────────────────────────
+export default function Calendar({ onAddTask, onRefresh }) {
+  const { view, setView, currentDate, navigateDate, goToday, tasks, setTasks, undatedTasks, setUndatedTasks, setTips, setLoadInfo } = useStore()
+  const [selectedTask, setSelectedTask] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      const [tasksRes, tipsRes] = await Promise.all([getTasks(view, currentDate), getTips()])
+      setTasks(tasksRes.data.tasks || [])
+      // Backend also returns undated tasks in same response
+      if (tasksRes.data.undated) setUndatedTasks(tasksRes.data.undated)
+      setTips(tipsRes.data.tips)
+      setLoadInfo(tipsRes.data.load)
+    } catch (e) { console.error(e) }
+  }, [view, currentDate])
+
+  useEffect(() => { load() }, [load])
+
+  const handleComplete = async (id, currentlyDone) => {
+    try {
+      if (currentlyDone) {
+        await updateTask(id, { status: 'pending' })
+        toast.success('Задача возобновлена')
+      } else {
+        await completeTask(id)
+        toast.success('✓ Задача выполнена!')
+      }
+      setSelectedTask(prev => prev?.id === id ? { ...prev, status: currentlyDone ? 'pending' : 'completed' } : prev)
+      await load()
+      onRefresh?.()
+    } catch { toast.error('Ошибка') }
+  }
+
+  const handleDelete = async (id) => {
+    try {
+      await deleteTask(id)
+      toast.success('Задача удалена')
+      setSelectedTask(null)
+      await load()
+      onRefresh?.()
+    } catch { toast.error('Ошибка') }
+  }
+
+  const handleUpdate = async (id, data) => {
+    await updateTask(id, data)
+    setSelectedTask(prev => prev?.id === id ? { ...prev, ...data } : prev)
+    await load()
+    onRefresh?.()
+  }
+
+  const formatPeriod = () => {
+    const d = dayjs(currentDate)
+    if (view === 'day') return d.format('D MMMM YYYY')
+    if (view === 'week') { const mon = d.startOf('week'); return `${mon.format('D MMM')} — ${mon.add(6,'day').format('D MMM YYYY')}` }
+    if (view === 'month') return d.format('MMMM YYYY')
+    return d.format('YYYY')
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
+        <div className="flex gap-1 bg-[var(--surface2)] rounded-lg p-1">
+          {['day','week','month','year'].map((v, i) => (
+            <button key={v} onClick={() => setView(v)}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${view === v ? 'bg-[var(--accent)] text-white' : 'text-[var(--text3)] hover:text-[var(--text)]'}`}>
+              {['День','Неделя','Месяц','Год'][i]}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => navigateDate('prev')} className="p-1.5 rounded-lg hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)] cursor-pointer transition-all">←</button>
+          <button onClick={goToday} className="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text2)] cursor-pointer transition-all">Сегодня</button>
+          <button onClick={() => navigateDate('next')} className="p-1.5 rounded-lg hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)] cursor-pointer transition-all">→</button>
+        </div>
+        <div className="text-sm font-medium text-[var(--text2)] capitalize">{formatPeriod()}</div>
+        <button onClick={onAddTask}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[var(--accent)] hover:bg-[#7c75ff] text-white text-xs font-medium rounded-lg transition-all cursor-pointer">
+          + Задача
+        </button>
+      </div>
+
+      {/* Calendar body */}
+      <div className="flex-1 overflow-auto p-4">
+        {view === 'day'   && <DayView   tasks={tasks} onOpen={setSelectedTask} />}
+        {view === 'week'  && <WeekView  tasks={tasks} currentDate={currentDate} onOpen={setSelectedTask} />}
+        {view === 'month' && <MonthView tasks={tasks} currentDate={currentDate} onOpen={setSelectedTask} />}
+        {view === 'year'  && <YearView  tasks={tasks} currentDate={currentDate} />}
+      </div>
+
+      {/* Undated tasks panel — collapsible strip at bottom */}
+      <UndatedPanel tasks={undatedTasks} onOpen={setSelectedTask} />
+
+      {/* Task modal */}
+      {selectedTask && (
+        <TaskModal
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+          onComplete={handleComplete}
+          onDelete={handleDelete}
+          onUpdate={handleUpdate}
+        />
+      )}
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/components/ChatBox.jsx">
+import React, { useState, useRef, useEffect } from 'react'
+import { sendChat, sendVoice, uploadFile, getChatHistory } from '../api'
+import { useStore } from '../store'
+import { Spinner } from './UI'
+import toast from 'react-hot-toast'
+
+const SUGGESTIONS = [
+  'Что мне сделать сегодня?',
+  'Я перегружен, помоги расставить приоритеты',
+  'Запланируй встречу завтра в 15:00',
+  'Какие задачи просрочены?',
+  'Как улучшить мою продуктивность?',
+]
+
+function Message({ msg }) {
+  const isUser = msg.role === 'user'
+  const meta = msg.metadata || {}
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} fade-in`}>
+      <div className={`max-w-[85%] ${isUser ? '' : 'w-full'}`}>
+        {/* Avatar for AI */}
+        {!isUser && (
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-5 h-5 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[10px] text-[var(--accent)]">✦</div>
+            <span className="text-[10px] text-[var(--text3)] font-mono">TaskFlow AI</span>
+          </div>
+        )}
+
+        <div className={`rounded-2xl px-3 py-2.5 text-sm leading-relaxed ${
+          isUser
+            ? 'bg-[var(--accent)] text-white rounded-br-sm'
+            : 'bg-[var(--surface2)] text-[var(--text)] rounded-bl-sm border border-[var(--border)]'
+        }`}>
+          {msg.content}
+        </div>
+
+        {/* Tasks created notification */}
+        {meta.tasks_to_create?.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1">
+            {meta.tasks_to_create.slice(0, 3).map((t, i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] bg-[var(--accent)]/8 border border-[var(--accent)]/20 rounded-lg px-2.5 py-1.5">
+                <span className="text-[var(--accent)]">✓</span>
+                <span className="text-[var(--text2)] truncate">{t.title}</span>
+                <span className="ml-auto text-[var(--text3)] font-mono">{t.category}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Load warning */}
+        {meta.load_warning && (
+          <div className="mt-2 text-[11px] bg-amber-400/10 border border-amber-400/20 text-amber-300 rounded-lg px-2.5 py-1.5">
+            ⚠️ {meta.load_warning}
+          </div>
+        )}
+
+        {/* Tips */}
+        {meta.tips?.map((tip, i) => (
+          <div key={i} className="mt-1.5 text-[11px] bg-emerald-400/8 border border-emerald-400/20 text-emerald-300 rounded-lg px-2.5 py-1.5">
+            💡 {tip}
+          </div>
+        ))}
+
+        {/* Transcript badge for voice */}
+        {msg.message_type === 'voice' && (
+          <div className="mt-1 text-[10px] text-[var(--text3)] font-mono flex items-center gap-1">
+            🎤 Голосовое сообщение
+          </div>
+        )}
+
+        <div className="text-[9px] text-[var(--text3)] mt-1 font-mono">
+          {new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-2 fade-in">
+      <div className="w-5 h-5 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[10px] text-[var(--accent)]">✦</div>
+      <div className="flex gap-1 bg-[var(--surface2)] rounded-2xl rounded-bl-sm px-3 py-2.5 border border-[var(--border)]">
+        {[0,1,2].map(i => (
+          <div key={i} className="w-1.5 h-1.5 rounded-full bg-[var(--text3)]"
+            style={{ animation: `bounce 1.2s infinite`, animationDelay: `${i * 0.2}s` }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default function ChatBox({ onTasksUpdated }) {
+  const { messages, setMessages, addMessage, isAiTyping, setAiTyping } = useStore()
+  const [input, setInput] = useState('')
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingTime, setRecordingTime] = useState(0)
+  const messagesEndRef = useRef(null)
+  const inputRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const recordTimerRef = useRef(null)
+
+  // Load history on mount
+  // ChatBox.jsx
+
+useEffect(() => {
+  const initChat = async () => {
+    try {
+      // 1. Делаем запрос к API
+      const response = await getChatHistory();
+      
+      // 2. В axios данные приходят в поле .data
+      // На бэкенде в get_history ты возвращаешь список: return [msg_to_dict(m) for m in msgs]
+      const history = response.data;
+
+      if (Array.isArray(history)) {
+        console.log("История загружена:", history.length, "сообщений");
+        setMessages(history); // ЗАПИСЫВАЕМ В STORE
+      }
+    } catch (error) {
+      console.error("Ошибка загрузки истории чата:", error);
+    }
+  };
+
+  initChat();
+}, []); // Пустые скобки — сработает только 1 раз при обновлении страницы (F5)
+useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isAiTyping])
+
+  const handleSend = async (text = input.trim()) => {
+  if (!text) return
+  const tempId = Date.now()
+  setInput('')
+  
+  const userMsg = {
+    id: tempId,
+    role: 'user',
+    content: text,
+    message_type: 'text',
+    metadata: {},
+    created_at: new Date().toISOString(),
+  }
+  addMessage(userMsg)
+  setAiTyping(true)
+
+  try {
+    const res = await sendChat(text)
+    const data = res.data || res 
+
+    const aiMsg = {
+      id: Date.now() + 1,
+      role: 'assistant',
+      // ИСПРАВЛЕНИЕ: если ИИ прислал пустое сообщение, пишем системную фразу
+      content: data.message || "Задачи обновлены 👍", 
+      message_type: 'text',
+      metadata: data,
+      created_at: new Date().toISOString(),
+    }
+    
+    addMessage(aiMsg)
+
+    if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+      // Вызываем обновление календаря
+      onTasksUpdated?.() 
+      
+      if (data.tasks_created?.length > 0) toast.success(`Создано: ${data.tasks_created.length}`)
+      if (data.tasks_updated?.length > 0) toast.success(`Обновлено: ${data.tasks_updated.length}`)
+    }
+
+  } catch (e) {
+    toast.error("Ошибка связи с ИИ")
+  } finally {
+    setAiTyping(false)
+  }
+}
+
+  // Voice recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = mr
+      chunksRef.current = []
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        await handleVoiceSend(blob)
+      }
+      mr.start()
+      setIsRecording(true)
+      setRecordingTime(0)
+      recordTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
+    } catch {
+      toast.error('Нет доступа к микрофону')
+    }
+  }
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+    setIsRecording(false)
+    clearInterval(recordTimerRef.current)
+  }
+
+  const handleVoiceSend = async (blob) => {
+    const userMsg = {
+      id: Date.now(),
+      role: 'user',
+      content: '🎤 Голосовое сообщение...',
+      message_type: 'voice',
+      metadata: {},
+      created_at: new Date().toISOString(),
+    }
+    addMessage(userMsg)
+    setAiTyping(true)
+
+    try {
+      const res = await sendVoice(blob)
+      const data = res.data || res
+
+      // Update user message with transcript
+      userMsg.content = `🎤 ${res.transcript || 'Голосовое сообщение'}`
+      const aiMsg = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: res.message,
+        message_type: 'text',
+        metadata: res,
+        created_at: new Date().toISOString(),
+      }
+      addMessage(aiMsg)
+
+      if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+        onTasksUpdated?.()
+        toast.success(`Задачи обработаны (голос)`)
+      }
+    } catch {
+      toast.error('Ошибка обработки голоса')
+    } finally {
+      setAiTyping(false)
+    }
+  }
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const userMsg = {
+      id: Date.now(),
+      role: 'user',
+      content: `📎 Загружен файл: ${file.name}`,
+      message_type: 'file',
+      metadata: {},
+      created_at: new Date().toISOString(),
+    }
+    addMessage(userMsg)
+    setAiTyping(true)
+    try {
+      const res = await uploadFile(file)
+      const data = res.data || res
+
+      addMessage({
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: res.message,
+        message_type: 'text',
+        metadata: res,
+        created_at: new Date().toISOString(),
+      })
+     if (data.tasks_created?.length > 0 || data.tasks_updated?.length > 0) {
+        onTasksUpdated?.()
+        toast.success(`Файл проанализирован, задачи обновлены`)
+      }
+    } catch {
+      toast.error('Ошибка загрузки файла')
+    } finally {
+      setAiTyping(false)
+      e.target.value = ''
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
+        <div className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot" />
+        <span className="text-sm font-medium">ИИ-помощник</span>
+        <span className="ml-auto text-[10px] font-mono text-[var(--text3)] bg-[var(--surface2)] px-2 py-0.5 rounded">Claude</span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <div className="text-3xl mb-3">✦</div>
+            <div className="text-sm text-[var(--text2)] mb-1">Ваш AI-планировщик готов</div>
+            <div className="text-xs text-[var(--text3)]">Опишите задачи текстом или голосом</div>
+          </div>
+        )}
+        {messages.map(msg => <Message key={msg.id} msg={msg} />)}
+        {isAiTyping && <TypingIndicator />}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Quick suggestions */}
+      {messages.length === 0 && (
+        <div className="px-3 pb-2 flex flex-col gap-1">
+          {SUGGESTIONS.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => handleSend(s)}
+              className="text-left text-[11px] px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text3)] hover:text-[var(--text)] hover:bg-[var(--surface2)] hover:border-[var(--accent)]/30 transition-all cursor-pointer"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Recording indicator */}
+      {isRecording && (
+        <div className="mx-3 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+          <span className="text-xs text-red-400 font-mono">REC {String(Math.floor(recordingTime/60)).padStart(2,'0')}:{String(recordingTime%60).padStart(2,'0')}</span>
+          <button onClick={stopRecording} className="ml-auto text-xs text-red-400 hover:text-red-300 cursor-pointer">Стоп ■</button>
+        </div>
+      )}
+
+      {/* Input area */}
+      <div className="p-3 border-t border-[var(--border)] flex-shrink-0">
+        <div className="flex gap-2 items-end">
+          <div className="flex-1 bg-[var(--surface2)] border border-[var(--border)] rounded-xl px-3 py-2 focus-within:border-[var(--accent)]/50 transition-all">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => {
+                setInput(e.target.value)
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px'
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSend()
+                }
+              }}
+              placeholder="Напишите о задаче..."
+              className="w-full bg-transparent text-sm text-[var(--text)] placeholder:text-[var(--text3)] outline-none resize-none min-h-[20px]"
+              rows={1}
+              disabled={isAiTyping}
+            />
+          </div>
+
+          {/* File upload */}
+          <label className="p-2 rounded-xl border border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)] cursor-pointer transition-all flex-shrink-0" title="Прикрепить файл">
+            📎
+            <input type="file" className="hidden" accept=".txt,.md,.csv,.pdf" onChange={handleFileUpload} />
+          </label>
+
+          {/* Voice button */}
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`p-2 rounded-xl border transition-all flex-shrink-0 cursor-pointer ${
+              isRecording
+                ? 'bg-red-500/20 border-red-500/40 text-red-400 animate-pulse'
+                : 'border-[var(--border)] hover:bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)]'
+            }`}
+            title={isRecording ? 'Остановить запись' : 'Голосовое сообщение'}
+          >
+            🎤
+          </button>
+
+          {/* Send */}
+          <button
+            onClick={() => handleSend()}
+            disabled={!input.trim() || isAiTyping}
+            className="p-2 rounded-xl bg-[var(--accent)] hover:bg-[#7c75ff] text-white transition-all flex-shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+          >
+            {isAiTyping ? <Spinner size={16} /> : '↑'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/pages/Main.jsx">
+import React, { useState, useEffect, useCallback } from 'react'
+import Calendar from '../components/Calendar'
+import ChatBox from '../components/ChatBox'
+import { TipsBar, AddTaskForm } from '../components/Widgets'
+import { useStore } from '../store'
+import { getUndated, getOverdue, getTips } from '../api'
+
+export default function MainPage() {
+  const [showAddForm, setShowAddForm] = useState(false)
+  const { setUndatedTasks, setOverdueTasks, setTips, setLoadInfo } = useStore()
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  const refresh = useCallback(() => {
+    setRefreshKey(k => k + 1)
+    Promise.all([
+      getUndated().then(r => setUndatedTasks(r.data)),
+      getOverdue().then(r => setOverdueTasks(r.data)),
+      getTips().then(r => { setTips(r.data.tips); setLoadInfo(r.data.load) }),
+    ]).catch(console.error)
+  }, [])
+
+  useEffect(() => { refresh() }, [])
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden">
+      <TipsBar />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden border-r border-[var(--border)]">
+          <Calendar key={refreshKey} onAddTask={() => setShowAddForm(true)} onRefresh={refresh} />
+        </div>
+        <div className="w-[380px] flex-shrink-0 flex flex-col">
+          <ChatBox onTasksUpdated={refresh} />
+        </div>
+      </div>
+      {showAddForm && (
+        <AddTaskForm
+          onClose={() => setShowAddForm(false)}
+          onCreated={() => { setShowAddForm(false); refresh() }}
+        />
+      )}
+    </div>
+  )
+}
+</file>
+
+<file path="frontend/src/store.js">
+import { create } from 'zustand'
+import dayjs from 'dayjs'
+
+export const useStore = create((set, get) => ({
+  // Calendar
+  view: 'week',
+  currentDate: dayjs().format('YYYY-MM-DD'),
+  setView: (view) => set({ view }),
+  setDate: (date) => set({ currentDate: date }),
+  goToday: () => set({ currentDate: dayjs().format('YYYY-MM-DD') }),
+  navigateDate: (direction) => {
+    const { view, currentDate } = get()
+    const d = dayjs(currentDate)
+    const unitMap = { day: 'day', week: 'week', month: 'month', year: 'year' }
+    const unit = unitMap[view] || 'week'
+    set({ currentDate: (direction === 'next' ? d.add(1, unit) : d.subtract(1, unit)).format('YYYY-MM-DD') })
+  },
+
+  // Tasks
+  tasks: [],
+  undatedTasks: [],
+  unsortedTasks: [],
+  overdueTasks: [],
+  setTasks: (tasks) => set({ tasks }),
+  setUndatedTasks: (t) => set({ undatedTasks: t }),
+  setUnsortedTasks: (t) => set({ unsortedTasks: t }),
+  setOverdueTasks: (t) => set({ overdueTasks: t }),
+
+  // Tips
+  tips: [],
+  loadInfo: null,
+  setTips: (tips) => set({ tips }),
+  setLoadInfo: (info) => set({ loadInfo: info }),
+
+  // Chat
+  messages: [],
+  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  setMessages: (msgs) => set({ messages: msgs }),
+  isAiTyping: false,
+  setAiTyping: (v) => set({ isAiTyping: v }),
+}))
+</file>
+
+<file path="README.md">
+# TaskFlow — AI-powered Task Manager
+
+## Стек
+- **Backend**: Python 3.11+ · FastAPI · SQLite · SQLAlchemy
+- **Frontend**: React 18 · Vite · TailwindCSS · Recharts
+- **AI**: Anthropic Claude (агент + анализ) · OpenAI Whisper (голос→текст)
+
+---
+
+## Быстрый старт
+
+### 1. Backend
+
+```bash
+cd backend
+
+# Создать виртуальное окружение
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Установить зависимости
+pip install -r requirements.txt
+
+# Создать .env файл
+cp .env.example .env
+# Открыть .env и вставить ваши ключи:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   OPENAI_API_KEY=sk-...   (нужен только для голосовых сообщений)
+
+# Запустить сервер
+uvicorn main:app --reload --port 8000
+```
+
+API будет доступен на http://localhost:8000  
+Swagger-документация: http://localhost:8000/docs
+
+### 2. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Приложение откроется на http://localhost:5173
+
+---
+
+## Структура проекта
+
+```
+taskflow/
+├── backend/
+│   ├── main.py               # FastAPI app entry point
+│   ├── database.py           # SQLAlchemy models + SQLite setup
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── routers/
+│   │   ├── tasks.py          # CRUD задач, calendar API, tips, load
+│   │   ├── ai_agent.py       # Chat, voice, file upload endpoints
+│   │   └── profile_stats.py  # Profile + Statistics endpoints
+│   └── services/
+│       ├── agent.py          # Основной AI агент (Claude)
+│       ├── transcribe.py     # Whisper STT
+│       └── load_analyzer.py  # Анализ нагрузки, генерация советов
+│
+└── frontend/
+    ├── src/
+    │   ├── App.jsx           # Роутинг + навигация
+    │   ├── main.jsx          # Entry point
+    │   ├── api.js            # Axios клиент
+    │   ├── store.js          # Zustand глобальное состояние
+    │   ├── index.css         # Глобальные стили + CSS переменные
+    │   ├── pages/
+    │   │   ├── Main.jsx      # Главная: Календарь + Чат
+    │   │   ├── Profile.jsx   # Профиль пользователя
+    │   │   └── Statistics.jsx # Дашборд аналитики
+    │   └── components/
+    │       ├── Calendar.jsx  # Вид день/неделя/месяц/год
+    │       ├── ChatBox.jsx   # AI чат с голосом и файлами
+    │       ├── Widgets.jsx   # TipsBar, AddTaskForm, UnsortedPanel
+    │       └── UI.jsx        # Переиспользуемые компоненты
+    ├── index.html
+    ├── package.json
+    ├── vite.config.js
+    ├── tailwind.config.js
+    └── postcss.config.js
+```
+
+---
+
+## API Endpoints
+
+### Tasks
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | /tasks/?view=day&date_str=2025-02-21 | Задачи по виду/дате |
+| GET | /tasks/unsorted | Задачи без сортировки |
+| GET | /tasks/overdue | Просроченные задачи |
+| GET | /tasks/tips | Советы + нагрузка |
+| POST | /tasks/ | Создать задачу |
+| PATCH | /tasks/{id} | Обновить задачу |
+| POST | /tasks/{id}/complete | Выполнить задачу |
+| POST | /tasks/{id}/postpone?new_date=... | Перенести задачу |
+| PATCH | /tasks/{id}/subtasks/{idx} | Переключить подзадачу |
+| DELETE | /tasks/{id} | Удалить задачу |
+
+### AI Agent
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | /ai/history | История чата |
+| POST | /ai/chat | Текстовое сообщение |
+| POST | /ai/voice | Голосовое сообщение (audio file) |
+| POST | /ai/upload-file | Загрузить файл с задачами |
+| WS | /ai/ws | WebSocket чат |
+
+### Profile & Stats
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | /profile/ | Профиль пользователя |
+| PATCH | /profile/ | Обновить профиль |
+| GET | /profile/memories | Память AI |
+| DELETE | /profile/memories/{id} | Удалить воспоминание |
+| GET | /stats/overview | Общая статистика |
+| GET | /stats/daily?days=30 | Статистика по дням |
+| GET | /stats/heatmap?year=2025 | Heatmap данные |
+
+---
+
+## Как работает AI агент
+
+1. **Принимает** текст, голос (через Whisper) или файл
+2. **Строит системный промпт** с контекстом пользователя (профиль, расписание, здоровье, память)
+3. **Анализирует** и возвращает структурированный JSON:
+   - Задачи для создания (с категорией, приоритетом, длительностью, дедлайном)
+   - Задачи в "unsorted" если данных недостаточно
+   - Уточняющие вопросы
+   - Советы по загруженности
+   - Новые воспоминания о пользователе
+4. **Сохраняет** задачи в SQLite, воспоминания в отдельную таблицу
+5. **Следующий разговор** уже включает все накопленные воспоминания
+
+---
+
+## Расширение проекта
+
+- **Уведомления**: подключить APScheduler + email/Telegram
+- **Мультипользователь**: добавить JWT авторизацию
+- **PDF парсинг**: добавить `pypdf2` в `upload-file` endpoint
+- **Мобильная версия**: PWA манифест уже можно добавить
+- **Деплой**: Backend на Railway, Frontend на Vercel
+</file>
+
+<file path="backend/.env">
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+OPENAI_API_KEY=sk-your-openai-key-here
+</file>
+
+<file path="backend/.env.example">
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+OPENAI_API_KEY=sk-your-openai-key-here
+</file>
+
+<file path="backend/services/agent.py">
+import json
+import re
+import os
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from database import Task, UserProfile, AIMemory, ChatMessage
+from openai import AsyncOpenAI  # Используем этот клиент для Ollama
+
+# Настройка локального клиента Ollama
+# Базовый адрес стандартный, ключ можно написать любой
+client = AsyncOpenAI(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama" 
+)
+
+AGENT_SYSTEM = """You are TaskFlow AI — an intelligent assistant.
+Current Date: {today}
+
+USER CONTEXT:
+{user_context}
+
+USER MEMORY:
+{user_memory}
+
+CURRENT TASKS (for reference/editing):
+{tasks_today}
+
+Your goal is to manage tasks and return ONLY STRICT JSON.
+RESPONSE FORMAT:
+{
+  "message": "Friendly response to user",
+  "tasks_to_create": [
+    {
+      "title": "Task name",
+      "category": "work|study|health|personal|finance|social|unsorted",
+      "priority": "critical|high|medium|low",
+      "duration_minutes": 30,
+      "start_datetime": "ISO string or null"
+    }
+  ],
+  "tasks_to_update": [
+    {
+      "id": 123, 
+      "updates": {
+        "title": "New title",
+        "priority": "critical|high|medium|low",
+        "start_datetime": "ISO string"
+      }
+    }
+  ],
+  "tasks_to_unsorted": [],
+  "clarifying_questions": [],
+  "memories_to_save": [],
+  "tips": []
+}
+
+Rules:
+- Today's date: {today}. Use this to resolve relative dates like "tomorrow" or "next Monday".
+- ALWAYS respond in the same language as the user (Russian/English).
+- Return ONLY JSON.
+- To edit a task, identify its ID from CURRENT TASKS.
+- If the user wants to change a task but doesn't specify WHAT to change, ask a clarifying question instead of sending an empty tasks_to_update
+- If the user doesn't specify a time, set start_datetime to null or ask a clarifying question.
+"""
+def get_user_context(db: Session, user_id: int = 1) -> dict:
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    if not user: return {}
+    return {
+        "name": user.name, "occupation": user.occupation,
+        "max_daily_hours": user.max_daily_hours
+    }
+
+def get_user_memory(db: Session, user_id: int = 1) -> str:
+    memories = db.query(AIMemory).filter(AIMemory.user_id == user_id).all()
+    if not memories: return "No memory yet."
+    return json.dumps({m.key: m.value for m in memories}, ensure_ascii=False)
+
+def get_tasks_today(db: Session, user_id: int = 1) -> list:
+    today = datetime.now().date()
+    # Берем задачи на сегодня или те, что уже просрочены (чтобы тоже можно было править)
+    tasks = db.query(Task).filter(
+        Task.user_id == user_id, 
+        Task.status != "completed"
+    ).all()
+    
+    return [
+        {
+            "id": t.id, 
+            "title": t.title, 
+            "priority": t.priority, 
+            "start": t.start_datetime.isoformat() if t.start_datetime else None
+        } 
+        for t in tasks
+    ]
+
+def build_system_prompt(db: Session, user_id: int = 1) -> str:
+    # 1. Берем реальное местное время, а не UTC, чтобы не было путаницы с "завтра"
+    today = datetime.now().strftime("%A, %Y-%m-%d %H:%M")
+    
+    # 2. Собираем данные, которые ты уже умеешь доставать из БД
+    user_ctx = get_user_context(db, user_id)
+    user_mem = get_user_memory(db, user_id)
+    tasks_today = get_tasks_today(db, user_id)
+
+    prompt = AGENT_SYSTEM
+    prompt = prompt.replace("{today}", today)
+    # Теперь ИИ будет знать твое имя, работу и сколько часов в день ты работаешь
+    prompt = prompt.replace("{user_context}", json.dumps(user_ctx, ensure_ascii=False))
+    prompt = prompt.replace("{tasks_today}", json.dumps(tasks_today, ensure_ascii=False))
+    prompt = prompt.replace("{user_memory}", user_mem)
+    return prompt
+
+def get_chat_history(db: Session, user_id: int = 1, limit: int = 10) -> list:
+    msgs = db.query(ChatMessage).filter(ChatMessage.user_id == user_id).order_by(ChatMessage.created_at.desc()).limit(limit).all()
+    msgs.reverse()
+    return [{"role": m.role, "content": m.content} for m in msgs]
+
+def save_message(db: Session, role: str, content: str, user_id: int = 1, msg_type: str = "text", metadata: dict = None):
+    try:
+        new_msg = ChatMessage(
+            user_id=user_id,
+            role=role,
+            content=content,
+            message_type=msg_type,  # В модели это message_type
+            meta=metadata,          # В модели это meta
+            created_at=datetime.utcnow()
+        )
+        db.add(new_msg)
+        db.commit()
+        db.refresh(new_msg)
+    except Exception as e:
+        db.rollback()
+        print(f"Ошибка сохранения сообщения: {e}")
+        
+def create_tasks_from_ai(db: Session, tasks_data: list, user_id: int = 1) -> list:
+    created = []
+    for td in tasks_data:
+        task = Task(
+            user_id=user_id,
+            title=td.get("title", "Новая задача"),
+            category=td.get("category", "unsorted"),
+            priority=td.get("priority", "medium"),
+            duration_minutes=td.get("duration_minutes", 30),
+            ai_generated=True
+        )
+        if td.get("start_datetime"):
+            try:
+                task.start_datetime = datetime.fromisoformat(td["start_datetime"])
+            except: pass
+        db.add(task)
+        created.append(task)
+    db.commit()
+    for t in created: db.refresh(t)
+    return created
+
+def parse_agent_response(text: str) -> dict:
+    """Парсит JSON, даже если ИИ добавил лишний текст."""
+    try:
+        return json.loads(text)
+    except:
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            try: return json.loads(match.group())
+            except: pass
+    return {"message": text, "tasks_to_create": []}
+def update_task_in_db(db: Session, task_id: int, updates: dict):
+    print(f"DEBUG: Attempting to update task {task_id} with {updates}") # Увидишь это в терминале
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        print(f"DEBUG: Task {task_id} not found")
+        return None
+    if not updates: # Если пришел пустой словарь - ничего не делаем
+        return None
+    for field, value in updates.items():
+        if hasattr(task, field):
+            if field in ["start_datetime", "deadline", "end_datetime"] and isinstance(value, str):
+                try:
+                    # Убираем лишние символы, если ИИ их добавил
+                    clean_date = value.replace('Z', '').split('+')[0]
+                    value = datetime.fromisoformat(clean_date)
+                except Exception as e:
+                    print(f"DEBUG: Date error: {e}")
+                    continue
+            setattr(task, field, value)
+            
+    db.commit()
+    db.refresh(task)
+    print(f"DEBUG: Task {task_id} updated successfully")
+    return task
+
+async def process_message(user_message: str, db: Session, user_id: int = 1, msg_type: str = "text") -> dict:
+    system_prompt = build_system_prompt(db, user_id)
+    history = get_chat_history(db, user_id)
+
+    save_message(db, "user", user_message, user_id, msg_type)
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        response = await client.chat.completions.create(
+            model="qwen2.5-coder:7b",
+            messages=messages,
+            temperature=0.1 
+        )
+        raw_content = response.choices[0].message.content
+    except Exception as e:
+        return {"message": f"Ошибка Ollama: {str(e)}", "tasks_created": []}
+
+    parsed = parse_agent_response(raw_content)
+    save_message(db, "assistant", parsed.get("message", raw_content), user_id, metadata=parsed)
+    
+    # --- СОЗДАНИЕ ЗАДАЧ ---
+    all_task_data = parsed.get("tasks_to_create", []) + parsed.get("tasks_to_unsorted", [])
+    created_tasks = create_tasks_from_ai(db, all_task_data, user_id)
+
+    # --- ОБНОВЛЕНИЕ ЗАДАЧ (Твой новый блок) ---
+    updated_task_ids = []
+    if parsed.get("tasks_to_update"):
+        for item in parsed["tasks_to_update"]:
+            t_id = item.get("id")
+            updates = item.get("updates")
+            if t_id and updates:
+                success = update_task_in_db(db, t_id, updates)
+                if success:
+                    updated_task_ids.append(t_id)
+
+    return {
+        "message": parsed.get("message", ""),
+        "tasks_created": [{"id": t.id, "title": t.title} for t in created_tasks],
+        "tasks_updated": updated_task_ids, # Сообщаем фронтенду, какие ID изменились
+        "clarifying_questions": parsed.get("clarifying_questions", []),
+        "tips": parsed.get("tips", [])
+    }
+</file>
+
+</files>

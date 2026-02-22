@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Calendar from '../components/Calendar'
 import ChatBox from '../components/ChatBox'
 import { TipsBar, AddTaskForm } from '../components/Widgets'
@@ -9,17 +9,38 @@ export default function MainPage() {
   const [showAddForm, setShowAddForm] = useState(false)
   const { setUndatedTasks, setOverdueTasks, setTips, setLoadInfo } = useStore()
   const [refreshKey, setRefreshKey] = useState(0)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const refresh = useCallback(() => {
     setRefreshKey(k => k + 1)
     Promise.all([
-      getUndated().then(r => setUndatedTasks(r.data)),
-      getOverdue().then(r => setOverdueTasks(r.data)),
-      getTips().then(r => { setTips(r.data.tips); setLoadInfo(r.data.load) }),
-    ]).catch(console.error)
-  }, [])
+      getUndated(),
+      getOverdue(),
+      getTips(),
+    ])
+      .then(([undatedRes, overdueRes, tipsRes]) => {
+        if (!mountedRef.current) return
+        setUndatedTasks(undatedRes.data)
+        setOverdueTasks(overdueRes.data)
+        setTips(tipsRes.data.tips)
+        setLoadInfo(tipsRes.data.load)
+      })
+      .catch(err => {
+        if (!mountedRef.current) return
+        console.error('[MainPage] refresh error:', err)
+      })
+  }, [setUndatedTasks, setOverdueTasks, setTips, setLoadInfo])
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

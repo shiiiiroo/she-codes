@@ -39,6 +39,47 @@ class TaskUpdate(BaseModel):
     subtasks: Optional[List[dict]] = None
 
 
+def is_task_overdue(task: Task) -> bool:
+    """
+    Задача просрочена если:
+    - start_datetime + duration_minutes < сейчас, ИЛИ
+    - deadline < сейчас
+    И задача не выполнена.
+    """
+    if task.status == "completed":
+        return False
+
+    now = datetime.now()
+
+    # Главное правило: начало + длительность уже прошли
+    if task.start_datetime and task.duration_minutes:
+        end_time = task.start_datetime + timedelta(minutes=task.duration_minutes)
+        if end_time < now:
+            return True
+
+    # Дедлайн прошёл
+    if task.deadline and task.deadline < now:
+        return True
+
+    return False
+
+
+def auto_update_status(task: Task) -> bool:
+    """Обновляет статус задачи если она просрочена. Возвращает True если изменился."""
+    if task.status in ("completed", "postponed"):
+        return False
+    if is_task_overdue(task):
+        if task.status != "overdue":
+            task.status = "overdue"
+            return True
+    else:
+        # Если задача была overdue но теперь нет (например перенесли) — вернуть pending
+        if task.status == "overdue":
+            task.status = "pending"
+            return True
+    return False
+
+
 def task_to_dict(t: Task) -> dict:
     return {
         "id": t.id,
@@ -72,17 +113,8 @@ def get_tasks(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Returns tasks for calendar view.
-    Includes:
-    - Tasks whose start_datetime falls in the period
-    - Tasks whose deadline falls in the period (overdue shown on deadline day)
-    - Tasks with NO date at all (undated) — separately in 'undated' key
-    - Overdue tasks (deadline < today, not completed) — included in current period
-    """
     user_id = 1
     target_date = date.fromisoformat(date_str) if date_str else date.today()
-    now = datetime.now()
     today_start = datetime.combine(date.today(), datetime.min.time())
 
     # Build date range for the view
@@ -114,6 +146,15 @@ def get_tasks(
 
     all_tasks = base_query.all()
 
+    # Автоматически обновляем статусы просроченных задач
+    changed = False
+    for task in all_tasks:
+        if auto_update_status(task):
+            task.updated_at = datetime.now()
+            changed = True
+    if changed:
+        db.commit()
+
     # 1. Tasks that START within the period
     in_period = [
         t for t in all_tasks
@@ -128,23 +169,13 @@ def get_tasks(
         and start <= t.deadline < end
     ]
 
-    # 3. Overdue: deadline < today, not completed, not already in period
-    # These are shown in current view so user sees them
+    # 3. Overdue tasks not already in period — показываем в текущем виде
     in_period_ids = {t.id for t in in_period} | {t.id for t in deadline_only}
     overdue_floating = [
         t for t in all_tasks
-        if t.deadline
-        and t.deadline < today_start
-        and t.status not in ("completed", "postponed")
+        if t.status == "overdue"
         and t.id not in in_period_ids
     ]
-
-    # Auto-mark overdue status in DB
-    for t in overdue_floating:
-        if t.status == "pending":
-            t.status = "overdue"
-    if overdue_floating:
-        db.commit()
 
     # Combine scheduled tasks
     scheduled_ids = in_period_ids | {t.id for t in overdue_floating}
@@ -173,7 +204,6 @@ def get_tasks(
 
 @router.get("/undated")
 def get_undated(db: Session = Depends(get_db)):
-    """Tasks with no date and no deadline."""
     tasks = db.query(Task).filter(
         Task.user_id == 1,
         Task.start_datetime.is_(None),
@@ -235,6 +265,10 @@ def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
     )
     if task.start_datetime and task_in.duration_minutes and not task.end_datetime:
         task.end_datetime = task.start_datetime + timedelta(minutes=task_in.duration_minutes)
+
+    # Проверяем сразу при создании
+    task.status = "overdue" if is_task_overdue(task) else "pending"
+
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -255,11 +289,16 @@ def update_task(task_id: int, updates: TaskUpdate, db: Session = Depends(get_db)
     task = db.query(Task).filter(Task.id == task_id, Task.user_id == 1).first()
     if not task:
         raise HTTPException(404, "Task not found")
+
     for field, value in updates.dict(exclude_none=True).items():
         setattr(task, field, value)
-    # If status set to pending/active, clear completed_at
-    if updates.status and updates.status in ("pending", "in_progress"):
+
+    # Если статус явно не передан — пересчитываем автоматически
+    if updates.status is None:
+        task.status = "overdue" if is_task_overdue(task) else (task.status if task.status != "overdue" else "pending")
+    elif updates.status in ("pending", "in_progress"):
         task.completed_at = None
+
     task.updated_at = datetime.now()
     db.commit()
     db.refresh(task)
